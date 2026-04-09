@@ -59,6 +59,7 @@
                               @(LookinRequestTypeSemanticLongPress),
                               @(LookinRequestTypeHighResolutionScreenshot),
                               @(LookinRequestTypeSemanticDismiss),
+                              @(LookinRequestTypeSemanticTextInput),
                               @(LookinPush_CanceHierarchyDetails),
                               nil];
         
@@ -376,6 +377,31 @@
             return;
         }
         [self _submitResponseWithData:@{@"detail": detail ?: @"Dismissed UIViewController"} requestType:requestType tag:tag];
+    } else if (requestType == LookinRequestTypeSemanticTextInput) {
+        if (![object isKindOfClass:[NSDictionary class]]) {
+            [self _submitResponseWithError:LookinErr_Inner requestType:requestType tag:tag];
+            return;
+        }
+        NSDictionary<NSString *, id> *params = object;
+        unsigned long oid = ((NSNumber *)params[@"oid"]).unsignedLongValue;
+        NSString *text = [params[@"text"] isKindOfClass:[NSString class]] ? (NSString *)params[@"text"] : nil;
+        if (!text) {
+            [self _submitResponseWithError:LookinErr_Inner requestType:requestType tag:tag];
+            return;
+        }
+        NSObject *targetObj = [NSObject lks_objectWithOid:oid];
+        if (!targetObj) {
+            [self _submitResponseWithError:LookinErr_ObjNotFound requestType:requestType tag:tag];
+            return;
+        }
+
+        NSError *error = nil;
+        NSString *detail = [self _performSemanticTextInputOnObject:targetObj text:text error:&error];
+        if (error) {
+            [self _submitResponseWithError:error requestType:requestType tag:tag];
+            return;
+        }
+        [self _submitResponseWithData:@{@"detail": detail ?: @"Inserted semantic text"} requestType:requestType tag:tag];
     }
 }
 
@@ -484,6 +510,21 @@
     return detail;
 }
 
+- (NSString *)_performSemanticTextInputOnObject:(NSObject *)targetObj text:(NSString *)text error:(NSError **)error {
+    if ([targetObj isKindOfClass:[UITextField class]]) {
+        return [self _performSemanticTextInputOnTextField:(UITextField *)targetObj text:text error:error];
+    }
+    if ([targetObj isKindOfClass:[UITextView class]]) {
+        return [self _performSemanticTextInputOnTextView:(UITextView *)targetObj text:text error:error];
+    }
+
+    if (error) {
+        NSString *message = [NSString stringWithFormat:LKS_Localized(@"Semantic text input only supports UITextField/UITextView targets, got %@."), NSStringFromClass(targetObj.class)];
+        *error = LookinErrorMake(message, @"");
+    }
+    return nil;
+}
+
 - (NSString *)_performSemanticLongPressOnView:(UIView *)view error:(NSError **)error {
     UIView *currentView = view;
     while (currentView) {
@@ -499,6 +540,65 @@
         *error = LookinErrorMake(message, @"");
     }
     return nil;
+}
+
+- (NSString *)_performSemanticTextInputOnTextField:(UITextField *)textField text:(NSString *)text error:(NSError **)error {
+    __block NSError *blockError = nil;
+    __block NSString *detail = nil;
+    void (^work)(void) = ^{
+        @try {
+            [textField becomeFirstResponder];
+            textField.text = text;
+            [textField sendActionsForControlEvents:UIControlEventEditingChanged];
+            detail = [NSString stringWithFormat:@"Inserted %lu characters into %@.", (unsigned long)text.length, NSStringFromClass(textField.class)];
+        } @catch (NSException *exception) {
+            NSString *message = [NSString stringWithFormat:LKS_Localized(@"%@ raised an exception while handling semantic text input."), NSStringFromClass(textField.class)];
+            blockError = LookinErrorMake(message, exception.reason ?: @"");
+        }
+    };
+
+    if ([NSThread isMainThread]) {
+        work();
+    } else {
+        dispatch_sync(dispatch_get_main_queue(), work);
+    }
+
+    if (error) {
+        *error = blockError;
+    }
+    return detail;
+}
+
+- (NSString *)_performSemanticTextInputOnTextView:(UITextView *)textView text:(NSString *)text error:(NSError **)error {
+    __block NSError *blockError = nil;
+    __block NSString *detail = nil;
+    void (^work)(void) = ^{
+        @try {
+            [textView becomeFirstResponder];
+            textView.text = text;
+            textView.selectedRange = NSMakeRange(text.length, 0);
+            id<UITextViewDelegate> delegate = textView.delegate;
+            if ([delegate respondsToSelector:@selector(textViewDidChange:)]) {
+                [delegate textViewDidChange:textView];
+            }
+            [[NSNotificationCenter defaultCenter] postNotificationName:UITextViewTextDidChangeNotification object:textView];
+            detail = [NSString stringWithFormat:@"Inserted %lu characters into %@.", (unsigned long)text.length, NSStringFromClass(textView.class)];
+        } @catch (NSException *exception) {
+            NSString *message = [NSString stringWithFormat:LKS_Localized(@"%@ raised an exception while handling semantic text input."), NSStringFromClass(textView.class)];
+            blockError = LookinErrorMake(message, exception.reason ?: @"");
+        }
+    };
+
+    if ([NSThread isMainThread]) {
+        work();
+    } else {
+        dispatch_sync(dispatch_get_main_queue(), work);
+    }
+
+    if (error) {
+        *error = blockError;
+    }
+    return detail;
 }
 
 - (NSString *)_performControlTap:(UIControl *)control error:(NSError **)error {

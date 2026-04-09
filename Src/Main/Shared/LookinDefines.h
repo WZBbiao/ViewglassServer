@@ -88,6 +88,9 @@ enum {
 
     /// 请求语义 dismiss 某个 UIViewController
     LookinRequestTypeSemanticDismiss = 218,
+
+    /// 请求对某个文本输入组件执行语义输入
+    LookinRequestTypeSemanticTextInput = 219,
     
     /// 从 LookinServer 1.2.7 & Lookin 1.0.7 开始，该属性被废弃、不再使用
     LookinPush_BringForwardScreenshotTask = 303,
