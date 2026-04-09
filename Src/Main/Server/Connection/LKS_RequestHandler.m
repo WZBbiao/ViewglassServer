@@ -380,6 +380,9 @@
         if (!target || selectorName.length == 0 || [selectorName isEqualToString:@"NULL"]) {
             continue;
         }
+        if (![self _isSemanticTapTarget:target selectorName:selectorName recognizer:recognizer]) {
+            continue;
+        }
         SEL selector = NSSelectorFromString(selectorName);
         if (![target respondsToSelector:selector]) {
             continue;
@@ -415,6 +418,33 @@
     }
 
     return nil;
+}
+
+- (BOOL)_isSemanticTapTarget:(NSObject *)target selectorName:(NSString *)selectorName recognizer:(UITapGestureRecognizer *)recognizer {
+    if (selectorName.length == 0) {
+        return NO;
+    }
+
+    NSString *targetClassName = NSStringFromClass(target.class);
+    NSString *recognizerClassName = NSStringFromClass(recognizer.class);
+
+    if ([selectorName hasPrefix:@"_"]) {
+        return NO;
+    }
+    if ([targetClassName hasPrefix:@"_"] || [recognizerClassName hasPrefix:@"_"]) {
+        return NO;
+    }
+    if ([target isKindOfClass:[UIWindow class]]) {
+        return NO;
+    }
+    if ([recognizer.view isKindOfClass:[UIWindow class]]) {
+        return NO;
+    }
+    if ([targetClassName hasPrefix:@"UI"] || [targetClassName hasPrefix:@"NS"]) {
+        return NO;
+    }
+
+    return YES;
 }
 
 - (NSArray<NSString *> *)_methodNameListForClass:(Class)aClass hasArg:(BOOL)hasArg {
