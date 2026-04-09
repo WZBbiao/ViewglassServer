@@ -71,6 +71,8 @@
         item.customAttrGroupList = [maker getGroups];
         item.customDisplayTitle = [maker getCustomDisplayTitle];
         item.danceuiSource = [maker getDanceUISource];
+    } else {
+        item.attributesGroupList = [LKS_AttrGroupsMaker runtimeMetadataGroupsForLayer:layer];
     }
     
     item.isHidden = layer.isHidden;

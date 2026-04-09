@@ -92,6 +92,14 @@
     return groups;
 }
 
++ (NSArray<LookinAttributesGroup *> *)runtimeMetadataGroupsForLayer:(CALayer *)layer {
+    LookinAttributesGroup *runtimeMetadataGroup = [self _runtimeMetadataGroupForLayer:layer];
+    if (!runtimeMetadataGroup) {
+        return @[];
+    }
+    return @[runtimeMetadataGroup];
+}
+
 + (LookinAttribute *)_attributeWithIdentifer:(LookinAttrIdentifier)identifier targetObject:(id)target {
     if (!target) {
         NSAssert(NO, @"");
