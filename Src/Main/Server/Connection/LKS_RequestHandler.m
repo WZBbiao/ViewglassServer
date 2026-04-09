@@ -417,6 +417,11 @@
         }
     }
 
+    NSString *fallbackDetail = [self _invokeTapGestureRecognizerViaResponderChain:recognizer error:error];
+    if (fallbackDetail || (error && *error)) {
+        return fallbackDetail;
+    }
+
     return nil;
 }
 
@@ -445,6 +450,58 @@
     }
 
     return YES;
+}
+
+- (NSString *)_invokeTapGestureRecognizerViaResponderChain:(UITapGestureRecognizer *)recognizer error:(NSError **)error {
+    NSString *description = recognizer.description ?: @"";
+    NSRange actionRange = [description rangeOfString:@"action="];
+    if (actionRange.location == NSNotFound) {
+        return nil;
+    }
+    NSUInteger start = NSMaxRange(actionRange);
+    NSRange tailRange = NSMakeRange(start, description.length - start);
+    NSRange endRange = [description rangeOfString:@"," options:0 range:tailRange];
+    if (endRange.location == NSNotFound || endRange.location <= start) {
+        return nil;
+    }
+
+    NSString *selectorName = [[description substringWithRange:NSMakeRange(start, endRange.location - start)] stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+    if (selectorName.length == 0 || [selectorName hasPrefix:@"_"]) {
+        return nil;
+    }
+    SEL selector = NSSelectorFromString(selectorName);
+
+    UIResponder *responder = recognizer.view;
+    while (responder) {
+        if ([responder respondsToSelector:selector]) {
+            NSMethodSignature *signature = [(NSObject *)responder methodSignatureForSelector:selector];
+            if (!signature || signature.numberOfArguments > 3) {
+                return nil;
+            }
+
+            NSInvocation *invocation = [NSInvocation invocationWithMethodSignature:signature];
+            invocation.target = responder;
+            invocation.selector = selector;
+            if (signature.numberOfArguments == 3) {
+                UIGestureRecognizer *argRecognizer = recognizer;
+                [invocation setArgument:&argRecognizer atIndex:2];
+            }
+
+            @try {
+                [invocation invoke];
+                return [NSString stringWithFormat:@"Triggered %@ on %@ via responder chain", selectorName, NSStringFromClass(responder.class)];
+            } @catch (NSException *exception) {
+                if (error) {
+                    NSString *message = [NSString stringWithFormat:LKS_Localized(@"%@ raised an exception while invoking %@."), NSStringFromClass(responder.class), selectorName];
+                    *error = LookinErrorMake(message, exception.reason ?: @"");
+                }
+                return nil;
+            }
+        }
+        responder = responder.nextResponder;
+    }
+
+    return nil;
 }
 
 - (NSArray<NSString *> *)_methodNameListForClass:(Class)aClass hasArg:(BOOL)hasArg {

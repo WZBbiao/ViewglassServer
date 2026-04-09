@@ -32,7 +32,38 @@
             if (!targetObj) {
                 return nil;
             }
-            SEL action = ((SEL (*)(id, Ivar))object_getIvar)(targetBox, class_getInstanceVariable([targetBox class], "_action"));
+            SEL action = NULL;
+            Ivar actionIvar = class_getInstanceVariable([targetBox class], "_action");
+            if (actionIvar != NULL) {
+                ptrdiff_t offset = ivar_getOffset(actionIvar);
+                uint8_t *bytes = (__bridge void *)targetBox;
+                action = *(SEL *)(bytes + offset);
+            }
+            if (action == NULL) {
+                @try {
+                    id actionValue = [targetBox valueForKey:@"_action"];
+                    if ([actionValue isKindOfClass:[NSString class]]) {
+                        action = NSSelectorFromString((NSString *)actionValue);
+                    }
+                } @catch (NSException *exception) {
+                    // Ignore and fall back to NULL below.
+                }
+            }
+            if (action == NULL) {
+                NSString *description = recognizer.description ?: @"";
+                NSRange actionRange = [description rangeOfString:@"action="];
+                if (actionRange.location != NSNotFound) {
+                    NSUInteger start = NSMaxRange(actionRange);
+                    NSUInteger end = [description rangeOfString:@"," options:0 range:NSMakeRange(start, description.length - start)].location;
+                    if (end != NSNotFound && end > start) {
+                        NSString *selectorName = [description substringWithRange:NSMakeRange(start, end - start)];
+                        selectorName = [selectorName stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+                        if (selectorName.length) {
+                            action = NSSelectorFromString(selectorName);
+                        }
+                    }
+                }
+            }
             
             LookinTwoTuple* tuple = [LookinTwoTuple new];
             tuple.first = [LookinWeakContainer containerWithObject:targetObj];
