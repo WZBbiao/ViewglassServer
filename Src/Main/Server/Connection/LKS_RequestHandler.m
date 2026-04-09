@@ -26,6 +26,9 @@
 #import "LKS_AttrModificationPatchHandler.h"
 #import "LKS_HierarchyDetailsHandler.h"
 #import "LookinStaticAsyncUpdateTask.h"
+#import "LKS_GestureTargetActionsSearcher.h"
+#import "LookinWeakContainer.h"
+#import "LookinTuple.h"
 
 @interface LKS_RequestHandler ()
 
@@ -52,6 +55,7 @@
                               @(LookinRequestTypeInvokeMethod),
                               @(LookinRequestTypeFetchImageViewImage),
                               @(LookinRequestTypeModifyRecognizerEnable),
+                              @(LookinRequestTypeSemanticTap),
                               @(LookinPush_CanceHierarchyDetails),
                               nil];
         
@@ -285,7 +289,132 @@
             // dispatch 以确保拿到的 enabled 是比较新的
             [self _submitResponseWithData:@(recognizer.enabled) requestType:requestType tag:tag];
         });
+    } else if (requestType == LookinRequestTypeSemanticTap) {
+        if (![object isKindOfClass:[NSDictionary class]]) {
+            [self _submitResponseWithError:LookinErr_Inner requestType:requestType tag:tag];
+            return;
+        }
+        NSDictionary<NSString *, NSNumber *> *params = object;
+        unsigned long oid = ((NSNumber *)params[@"oid"]).unsignedLongValue;
+        NSObject *targetObj = [NSObject lks_objectWithOid:oid];
+        if (!targetObj) {
+            [self _submitResponseWithError:LookinErr_ObjNotFound requestType:requestType tag:tag];
+            return;
+        }
+        if (![targetObj isKindOfClass:[UIView class]]) {
+            NSString *message = [NSString stringWithFormat:LKS_Localized(@"Semantic tap only supports UIView targets, got %@."), NSStringFromClass(targetObj.class)];
+            [self _submitResponseWithError:LookinErrorMake(message, @"") requestType:requestType tag:tag];
+            return;
+        }
+        NSError *error = nil;
+        NSString *detail = [self _performSemanticTapOnView:(UIView *)targetObj error:&error];
+        if (error) {
+            [self _submitResponseWithError:error requestType:requestType tag:tag];
+            return;
+        }
+        [self _submitResponseWithData:@{@"detail": detail ?: @"Triggered semantic tap"} requestType:requestType tag:tag];
     }
+}
+
+- (NSString *)_performSemanticTapOnView:(UIView *)view error:(NSError **)error {
+    UIView *currentView = view;
+    while (currentView) {
+        if ([currentView isKindOfClass:[UIControl class]]) {
+            NSString *detail = [self _performControlTap:(UIControl *)currentView error:error];
+            if (detail || (error && *error)) {
+                return detail;
+            }
+        }
+
+        NSString *detail = [self _performTapGestureOnView:currentView error:error];
+        if (detail || (error && *error)) {
+            return detail;
+        }
+
+        currentView = currentView.superview;
+    }
+
+    NSString *message = [NSString stringWithFormat:LKS_Localized(@"Didn't find a tappable UIControl or UITapGestureRecognizer for %@."), NSStringFromClass(view.class)];
+    if (error) {
+        *error = LookinErrorMake(message, @"");
+    }
+    return nil;
+}
+
+- (NSString *)_performControlTap:(UIControl *)control error:(NSError **)error {
+    SEL selector = @selector(sendActionsForControlEvents:);
+    if (![control respondsToSelector:selector]) {
+        return nil;
+    }
+    @try {
+        [control sendActionsForControlEvents:UIControlEventTouchUpInside];
+        return [NSString stringWithFormat:@"Triggered UIControlEventTouchUpInside on %@", NSStringFromClass(control.class)];
+    } @catch (NSException *exception) {
+        if (error) {
+            NSString *message = [NSString stringWithFormat:LKS_Localized(@"%@ raised an exception while handling touchUpInside."), NSStringFromClass(control.class)];
+            *error = LookinErrorMake(message, exception.reason ?: @"");
+        }
+        return nil;
+    }
+}
+
+- (NSString *)_performTapGestureOnView:(UIView *)view error:(NSError **)error {
+    for (UIGestureRecognizer *recognizer in view.gestureRecognizers) {
+        if (![recognizer isKindOfClass:[UITapGestureRecognizer class]] || !recognizer.enabled) {
+            continue;
+        }
+        NSString *detail = [self _invokeTapGestureRecognizer:(UITapGestureRecognizer *)recognizer error:error];
+        if (detail || (error && *error)) {
+            return detail;
+        }
+    }
+    return nil;
+}
+
+- (NSString *)_invokeTapGestureRecognizer:(UITapGestureRecognizer *)recognizer error:(NSError **)error {
+    NSArray<LookinTwoTuple *> *targetActions = [LKS_GestureTargetActionsSearcher getTargetActionsFromRecognizer:recognizer];
+    for (LookinTwoTuple *tuple in targetActions) {
+        LookinWeakContainer *container = [tuple.first isKindOfClass:[LookinWeakContainer class]] ? (LookinWeakContainer *)tuple.first : nil;
+        NSObject *target = container.object;
+        NSString *selectorName = [tuple.second isKindOfClass:[NSString class]] ? (NSString *)tuple.second : nil;
+        if (!target || selectorName.length == 0 || [selectorName isEqualToString:@"NULL"]) {
+            continue;
+        }
+        SEL selector = NSSelectorFromString(selectorName);
+        if (![target respondsToSelector:selector]) {
+            continue;
+        }
+
+        NSMethodSignature *signature = [target methodSignatureForSelector:selector];
+        if (!signature) {
+            continue;
+        }
+
+        if (signature.numberOfArguments > 3) {
+            continue;
+        }
+
+        NSInvocation *invocation = [NSInvocation invocationWithMethodSignature:signature];
+        invocation.target = target;
+        invocation.selector = selector;
+        if (signature.numberOfArguments == 3) {
+            UIGestureRecognizer *argRecognizer = recognizer;
+            [invocation setArgument:&argRecognizer atIndex:2];
+        }
+
+        @try {
+            [invocation invoke];
+            return [NSString stringWithFormat:@"Triggered %@ on %@ via %@", selectorName, NSStringFromClass(target.class), NSStringFromClass(recognizer.class)];
+        } @catch (NSException *exception) {
+            if (error) {
+                NSString *message = [NSString stringWithFormat:LKS_Localized(@"%@ raised an exception while invoking %@."), NSStringFromClass(target.class), selectorName];
+                *error = LookinErrorMake(message, exception.reason ?: @"");
+            }
+            return nil;
+        }
+    }
+
+    return nil;
 }
 
 - (NSArray<NSString *> *)_methodNameListForClass:(Class)aClass hasArg:(BOOL)hasArg {
