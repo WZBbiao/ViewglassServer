@@ -1,6 +1,6 @@
 Pod::Spec.new do |spec|
   spec.name         = "LookinServer"
-  spec.version      = "1.2.9"
+  spec.version      = "0.1.0"
   spec.summary      = "The iOS runtime server used by Viewglass."
   spec.description  = "Embed this framework into your debug iOS project to enable Viewglass runtime inspection and actions."
   spec.homepage     = "https://github.com/WZBbiao/ViewglassServer"
@@ -10,7 +10,7 @@ Pod::Spec.new do |spec|
   spec.tvos.deployment_target  = '9.0'
   spec.visionos.deployment_target = "1.0"
   spec.default_subspecs = 'Core'
-  spec.source       = { :git => "https://github.com/WZBbiao/ViewglassServer.git", :tag => "1.2.9"}
+  spec.source       = { :git => "https://github.com/WZBbiao/ViewglassServer.git", :tag => "0.1.0"}
   spec.framework  = "UIKit"
   spec.requires_arc = true
     

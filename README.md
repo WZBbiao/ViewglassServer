@@ -35,14 +35,14 @@ In Xcode:
 https://github.com/WZBbiao/ViewglassServer.git
 ```
 
-4. Choose the latest tag, currently `1.2.9`.
+4. Choose the latest tag, currently `0.1.0`.
 5. Add the `LookinServer` library to your app target.
 6. Link it only in `Debug` builds.
 
 Example `Package.swift`:
 
 ```swift
-.package(url: "https://github.com/WZBbiao/ViewglassServer.git", from: "1.2.9")
+.package(url: "https://github.com/WZBbiao/ViewglassServer.git", from: "0.1.0")
 ```
 
 Then add:
@@ -64,19 +64,19 @@ If your project still uses CocoaPods:
 ### Swift project
 
 ```ruby
-pod 'LookinServer', :git => 'https://github.com/WZBbiao/ViewglassServer.git', :tag => '1.2.9', :subspecs => ['Swift'], :configurations => ['Debug']
+pod 'LookinServer', :git => 'https://github.com/WZBbiao/ViewglassServer.git', :tag => '0.1.0', :subspecs => ['Swift'], :configurations => ['Debug']
 ```
 
 ### Objective-C project
 
 ```ruby
-pod 'LookinServer', :git => 'https://github.com/WZBbiao/ViewglassServer.git', :tag => '1.2.9', :configurations => ['Debug']
+pod 'LookinServer', :git => 'https://github.com/WZBbiao/ViewglassServer.git', :tag => '0.1.0', :configurations => ['Debug']
 ```
 
 If you need the `NoHook` variant:
 
 ```ruby
-pod 'LookinServer/NoHook', :git => 'https://github.com/WZBbiao/ViewglassServer.git', :tag => '1.2.9', :configurations => ['Debug']
+pod 'LookinServer/NoHook', :git => 'https://github.com/WZBbiao/ViewglassServer.git', :tag => '0.1.0', :configurations => ['Debug']
 ```
 
 ## Basic Usage
@@ -139,11 +139,11 @@ https://github.com/WZBbiao/ViewglassServer.git
 CocoaPods 示例：
 
 ```ruby
-pod 'LookinServer', :git => 'https://github.com/WZBbiao/ViewglassServer.git', :tag => '1.2.9', :configurations => ['Debug']
+pod 'LookinServer', :git => 'https://github.com/WZBbiao/ViewglassServer.git', :tag => '0.1.0', :configurations => ['Debug']
 ```
 
 Swift 项目如果需要 Swift 支持：
 
 ```ruby
-pod 'LookinServer', :git => 'https://github.com/WZBbiao/ViewglassServer.git', :tag => '1.2.9', :subspecs => ['Swift'], :configurations => ['Debug']
+pod 'LookinServer', :git => 'https://github.com/WZBbiao/ViewglassServer.git', :tag => '0.1.0', :subspecs => ['Swift'], :configurations => ['Debug']
 ```
