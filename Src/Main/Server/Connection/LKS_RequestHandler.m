@@ -57,6 +57,7 @@
                               @(LookinRequestTypeModifyRecognizerEnable),
                               @(LookinRequestTypeSemanticTap),
                               @(LookinRequestTypeSemanticLongPress),
+                              @(LookinRequestTypeHighResolutionScreenshot),
                               @(LookinPush_CanceHierarchyDetails),
                               nil];
         
@@ -338,7 +339,74 @@
             return;
         }
         [self _submitResponseWithData:@{@"detail": detail ?: @"Triggered semantic long press"} requestType:requestType tag:tag];
+    } else if (requestType == LookinRequestTypeHighResolutionScreenshot) {
+        if (![object isKindOfClass:[NSDictionary class]]) {
+            [self _submitResponseWithError:LookinErr_Inner requestType:requestType tag:tag];
+            return;
+        }
+        NSError *error = nil;
+        NSData *imageData = [self _captureHighResolutionScreenshotWithParams:(NSDictionary<NSString *, id> *)object error:&error];
+        if (error || !imageData.length) {
+            [self _submitResponseWithError:error ?: LookinErr_Inner requestType:requestType tag:tag];
+            return;
+        }
+        [self _submitResponseWithData:imageData requestType:requestType tag:tag];
     }
+}
+
+- (NSData *)_captureHighResolutionScreenshotWithParams:(NSDictionary<NSString *, id> *)params error:(NSError **)error {
+    NSNumber *oidNumber = params[@"oid"];
+    if (!oidNumber || oidNumber == (id)kCFNull) {
+        UIImage *image = [LookinAppInfo highResolutionScreenshotImage];
+        if (!image) {
+            if (error) {
+                *error = LookinErrorMake(LKS_Localized(@"Failed to capture a high-resolution screen screenshot."), @"");
+            }
+            return nil;
+        }
+        NSData *data = UIImagePNGRepresentation(image);
+        if (!data.length && error) {
+            *error = LookinErrorMake(LKS_Localized(@"Failed to encode the screen screenshot as PNG."), @"");
+        }
+        return data;
+    }
+
+    unsigned long oid = oidNumber.unsignedLongValue;
+    NSObject *targetObj = [NSObject lks_objectWithOid:oid];
+    if (!targetObj) {
+        if (error) {
+            *error = LookinErr_ObjNotFound;
+        }
+        return nil;
+    }
+
+    CALayer *layer = nil;
+    if ([targetObj isKindOfClass:[CALayer class]]) {
+        layer = (CALayer *)targetObj;
+    } else if ([targetObj isKindOfClass:[UIView class]]) {
+        layer = ((UIView *)targetObj).layer;
+    }
+    if (!layer) {
+        if (error) {
+            NSString *message = [NSString stringWithFormat:LKS_Localized(@"High-resolution node screenshot only supports UIView/CALayer targets, got %@."), NSStringFromClass(targetObj.class)];
+            *error = LookinErrorMake(message, @"");
+        }
+        return nil;
+    }
+
+    UIImage *image = [layer lks_groupScreenshotWithLowQuality:NO];
+    if (!image) {
+        if (error) {
+            NSString *message = [NSString stringWithFormat:LKS_Localized(@"Failed to capture a high-resolution node screenshot for %@."), NSStringFromClass(targetObj.class)];
+            *error = LookinErrorMake(message, @"");
+        }
+        return nil;
+    }
+    NSData *data = UIImagePNGRepresentation(image);
+    if (!data.length && error) {
+        *error = LookinErrorMake(LKS_Localized(@"Failed to encode the node screenshot as PNG."), @"");
+    }
+    return data;
 }
 
 - (NSString *)_performSemanticTapOnView:(UIView *)view error:(NSError **)error {

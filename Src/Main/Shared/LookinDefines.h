@@ -82,6 +82,9 @@ enum {
 
     /// 请求对某个视图执行语义长按
     LookinRequestTypeSemanticLongPress = 216,
+
+    /// 请求高分辨率截图。无 oid 表示整屏，有 oid 表示节点截图。
+    LookinRequestTypeHighResolutionScreenshot = 217,
     
     /// 从 LookinServer 1.2.7 & Lookin 1.0.7 开始，该属性被废弃、不再使用
     LookinPush_BringForwardScreenshotTask = 303,

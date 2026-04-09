@@ -60,6 +60,7 @@ typedef NS_ENUM(NSInteger, LookinAppInfoDevice) {
 #if TARGET_OS_IPHONE
 
 + (LookinAppInfo *)currentInfoWithScreenshot:(BOOL)hasScreenshot icon:(BOOL)hasIcon localIdentifiers:(NSArray<NSNumber *> *)localIdentifiers;
++ (UIImage *)highResolutionScreenshotImage;
 
 #else
 

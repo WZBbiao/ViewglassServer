@@ -228,6 +228,27 @@ static NSString * const CodingKey_DeviceType = @"8";
     return image;
 }
 
++ (UIImage *)highResolutionScreenshotImage {
+    UIWindow *window = [LKS_MultiplatformAdapter keyWindow];
+    if (!window) {
+        return nil;
+    }
+    CGSize size = window.bounds.size;
+    if (size.width <= 0 || size.height <= 0) {
+        return nil;
+    }
+
+    UIGraphicsBeginImageContextWithOptions(size, YES, 0);
+    BOOL drewHierarchy = [window drawViewHierarchyInRect:window.bounds afterScreenUpdates:YES];
+    if (!drewHierarchy) {
+        CGContextRef context = UIGraphicsGetCurrentContext();
+        [window.layer renderInContext:context];
+    }
+    UIImage *image = UIGraphicsGetImageFromCurrentImageContext();
+    UIGraphicsEndImageContext();
+    return image;
+}
+
 + (BOOL)isSimulator {
     if (TARGET_OS_SIMULATOR) {
         return YES;
