@@ -79,6 +79,9 @@ enum {
 
     /// 请求对某个视图执行语义点击
     LookinRequestTypeSemanticTap = 215,
+
+    /// 请求对某个视图执行语义长按
+    LookinRequestTypeSemanticLongPress = 216,
     
     /// 从 LookinServer 1.2.7 & Lookin 1.0.7 开始，该属性被废弃、不再使用
     LookinPush_BringForwardScreenshotTask = 303,

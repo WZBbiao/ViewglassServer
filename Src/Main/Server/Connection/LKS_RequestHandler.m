@@ -56,6 +56,7 @@
                               @(LookinRequestTypeFetchImageViewImage),
                               @(LookinRequestTypeModifyRecognizerEnable),
                               @(LookinRequestTypeSemanticTap),
+                              @(LookinRequestTypeSemanticLongPress),
                               @(LookinPush_CanceHierarchyDetails),
                               nil];
         
@@ -313,6 +314,30 @@
             return;
         }
         [self _submitResponseWithData:@{@"detail": detail ?: @"Triggered semantic tap"} requestType:requestType tag:tag];
+    } else if (requestType == LookinRequestTypeSemanticLongPress) {
+        if (![object isKindOfClass:[NSDictionary class]]) {
+            [self _submitResponseWithError:LookinErr_Inner requestType:requestType tag:tag];
+            return;
+        }
+        NSDictionary<NSString *, NSNumber *> *params = object;
+        unsigned long oid = ((NSNumber *)params[@"oid"]).unsignedLongValue;
+        NSObject *targetObj = [NSObject lks_objectWithOid:oid];
+        if (!targetObj) {
+            [self _submitResponseWithError:LookinErr_ObjNotFound requestType:requestType tag:tag];
+            return;
+        }
+        if (![targetObj isKindOfClass:[UIView class]]) {
+            NSString *message = [NSString stringWithFormat:LKS_Localized(@"Semantic long press only supports UIView targets, got %@."), NSStringFromClass(targetObj.class)];
+            [self _submitResponseWithError:LookinErrorMake(message, @"") requestType:requestType tag:tag];
+            return;
+        }
+        NSError *error = nil;
+        NSString *detail = [self _performSemanticLongPressOnView:(UIView *)targetObj error:&error];
+        if (error) {
+            [self _submitResponseWithError:error requestType:requestType tag:tag];
+            return;
+        }
+        [self _submitResponseWithData:@{@"detail": detail ?: @"Triggered semantic long press"} requestType:requestType tag:tag];
     }
 }
 
@@ -335,6 +360,23 @@
     }
 
     NSString *message = [NSString stringWithFormat:LKS_Localized(@"Didn't find a tappable UIControl or UITapGestureRecognizer for %@."), NSStringFromClass(view.class)];
+    if (error) {
+        *error = LookinErrorMake(message, @"");
+    }
+    return nil;
+}
+
+- (NSString *)_performSemanticLongPressOnView:(UIView *)view error:(NSError **)error {
+    UIView *currentView = view;
+    while (currentView) {
+        NSString *detail = [self _performLongPressGestureOnView:currentView error:error];
+        if (detail || (error && *error)) {
+            return detail;
+        }
+        currentView = currentView.superview;
+    }
+
+    NSString *message = [NSString stringWithFormat:LKS_Localized(@"Didn't find an enabled UILongPressGestureRecognizer for %@."), NSStringFromClass(view.class)];
     if (error) {
         *error = LookinErrorMake(message, @"");
     }
@@ -371,6 +413,19 @@
     return nil;
 }
 
+- (NSString *)_performLongPressGestureOnView:(UIView *)view error:(NSError **)error {
+    for (UIGestureRecognizer *recognizer in view.gestureRecognizers) {
+        if (![recognizer isKindOfClass:[UILongPressGestureRecognizer class]] || !recognizer.enabled) {
+            continue;
+        }
+        NSString *detail = [self _invokeLongPressGestureRecognizer:(UILongPressGestureRecognizer *)recognizer error:error];
+        if (detail || (error && *error)) {
+            return detail;
+        }
+    }
+    return nil;
+}
+
 - (NSString *)_invokeTapGestureRecognizer:(UITapGestureRecognizer *)recognizer error:(NSError **)error {
     NSArray<LookinTwoTuple *> *targetActions = [LKS_GestureTargetActionsSearcher getTargetActionsFromRecognizer:recognizer];
     for (LookinTwoTuple *tuple in targetActions) {
@@ -380,7 +435,7 @@
         if (!target || selectorName.length == 0 || [selectorName isEqualToString:@"NULL"]) {
             continue;
         }
-        if (![self _isSemanticTapTarget:target selectorName:selectorName recognizer:recognizer]) {
+        if (![self _isSemanticGestureTarget:target selectorName:selectorName recognizer:recognizer]) {
             continue;
         }
         SEL selector = NSSelectorFromString(selectorName);
@@ -405,19 +460,13 @@
             [invocation setArgument:&argRecognizer atIndex:2];
         }
 
-        @try {
-            [invocation invoke];
-            return [NSString stringWithFormat:@"Triggered %@ on %@ via %@", selectorName, NSStringFromClass(target.class), NSStringFromClass(recognizer.class)];
-        } @catch (NSException *exception) {
-            if (error) {
-                NSString *message = [NSString stringWithFormat:LKS_Localized(@"%@ raised an exception while invoking %@."), NSStringFromClass(target.class), selectorName];
-                *error = LookinErrorMake(message, exception.reason ?: @"");
-            }
-            return nil;
+        NSString *detail = [self _invokeGestureInvocation:invocation selectorName:selectorName target:target recognizer:recognizer injectLongPressState:NO error:error];
+        if (detail || (error && *error)) {
+            return detail;
         }
     }
 
-    NSString *fallbackDetail = [self _invokeTapGestureRecognizerViaResponderChain:recognizer error:error];
+    NSString *fallbackDetail = [self _invokeGestureRecognizerViaResponderChain:recognizer injectLongPressState:NO error:error];
     if (fallbackDetail || (error && *error)) {
         return fallbackDetail;
     }
@@ -425,7 +474,83 @@
     return nil;
 }
 
-- (BOOL)_isSemanticTapTarget:(NSObject *)target selectorName:(NSString *)selectorName recognizer:(UITapGestureRecognizer *)recognizer {
+- (NSString *)_invokeLongPressGestureRecognizer:(UILongPressGestureRecognizer *)recognizer error:(NSError **)error {
+    NSArray<LookinTwoTuple *> *targetActions = [LKS_GestureTargetActionsSearcher getTargetActionsFromRecognizer:recognizer];
+    for (LookinTwoTuple *tuple in targetActions) {
+        LookinWeakContainer *container = [tuple.first isKindOfClass:[LookinWeakContainer class]] ? (LookinWeakContainer *)tuple.first : nil;
+        NSObject *target = container.object;
+        NSString *selectorName = [tuple.second isKindOfClass:[NSString class]] ? (NSString *)tuple.second : nil;
+        if (!target || selectorName.length == 0 || [selectorName isEqualToString:@"NULL"]) {
+            continue;
+        }
+        if (![self _isSemanticGestureTarget:target selectorName:selectorName recognizer:recognizer]) {
+            continue;
+        }
+        SEL selector = NSSelectorFromString(selectorName);
+        if (![target respondsToSelector:selector]) {
+            continue;
+        }
+
+        NSMethodSignature *signature = [target methodSignatureForSelector:selector];
+        if (!signature || signature.numberOfArguments > 3) {
+            continue;
+        }
+
+        NSInvocation *invocation = [NSInvocation invocationWithMethodSignature:signature];
+        invocation.target = target;
+        invocation.selector = selector;
+        if (signature.numberOfArguments == 3) {
+            UIGestureRecognizer *argRecognizer = recognizer;
+            [invocation setArgument:&argRecognizer atIndex:2];
+        }
+
+        NSString *detail = [self _invokeGestureInvocation:invocation selectorName:selectorName target:target recognizer:recognizer injectLongPressState:YES error:error];
+        if (detail || (error && *error)) {
+            return detail;
+        }
+    }
+
+    NSString *fallbackDetail = [self _invokeGestureRecognizerViaResponderChain:recognizer injectLongPressState:YES error:error];
+    if (fallbackDetail || (error && *error)) {
+        return fallbackDetail;
+    }
+
+    return nil;
+}
+
+- (NSString *)_invokeGestureInvocation:(NSInvocation *)invocation selectorName:(NSString *)selectorName target:(NSObject *)target recognizer:(UIGestureRecognizer *)recognizer injectLongPressState:(BOOL)injectLongPressState error:(NSError **)error {
+    NSNumber *originalState = nil;
+    BOOL didOverrideState = NO;
+    if (injectLongPressState && [recognizer isKindOfClass:[UILongPressGestureRecognizer class]]) {
+        @try {
+            originalState = [recognizer valueForKey:@"state"];
+            [recognizer setValue:@(UIGestureRecognizerStateBegan) forKey:@"state"];
+            didOverrideState = YES;
+        } @catch (__unused NSException *exception) {
+            didOverrideState = NO;
+        }
+    }
+
+    @try {
+        [invocation invoke];
+        return [NSString stringWithFormat:@"Triggered %@ on %@ via %@", selectorName, NSStringFromClass(target.class), NSStringFromClass(recognizer.class)];
+    } @catch (NSException *exception) {
+        if (error) {
+            NSString *message = [NSString stringWithFormat:LKS_Localized(@"%@ raised an exception while invoking %@."), NSStringFromClass(target.class), selectorName];
+            *error = LookinErrorMake(message, exception.reason ?: @"");
+        }
+        return nil;
+    } @finally {
+        if (didOverrideState) {
+            @try {
+                [recognizer setValue:originalState forKey:@"state"];
+            } @catch (__unused NSException *exception) {
+            }
+        }
+    }
+}
+
+- (BOOL)_isSemanticGestureTarget:(NSObject *)target selectorName:(NSString *)selectorName recognizer:(UIGestureRecognizer *)recognizer {
     if (selectorName.length == 0) {
         return NO;
     }
@@ -452,7 +577,7 @@
     return YES;
 }
 
-- (NSString *)_invokeTapGestureRecognizerViaResponderChain:(UITapGestureRecognizer *)recognizer error:(NSError **)error {
+- (NSString *)_invokeGestureRecognizerViaResponderChain:(UIGestureRecognizer *)recognizer injectLongPressState:(BOOL)injectLongPressState error:(NSError **)error {
     NSString *description = recognizer.description ?: @"";
     NSRange actionRange = [description rangeOfString:@"action="];
     if (actionRange.location == NSNotFound) {
@@ -488,7 +613,14 @@
             }
 
             @try {
-                [invocation invoke];
+                if (injectLongPressState && [recognizer isKindOfClass:[UILongPressGestureRecognizer class]]) {
+                    NSNumber *originalState = [recognizer valueForKey:@"state"];
+                    [recognizer setValue:@(UIGestureRecognizerStateBegan) forKey:@"state"];
+                    [invocation invoke];
+                    [recognizer setValue:originalState forKey:@"state"];
+                } else {
+                    [invocation invoke];
+                }
                 return [NSString stringWithFormat:@"Triggered %@ on %@ via responder chain", selectorName, NSStringFromClass(responder.class)];
             } @catch (NSException *exception) {
                 if (error) {
