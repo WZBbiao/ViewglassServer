@@ -1,73 +1,149 @@
-![Preview](https://cdn.lookin.work/public/style/images/independent/homepage/preview_en_1x.jpg "Preview")
+# ViewglassServer
 
-# Introduction
-You can inspect and modify views in iOS app via Lookin, just like UI Inspector in Xcode, or another app called Reveal.
+`ViewglassServer` is the iOS runtime server used by [Viewglass](https://github.com/WZBbiao/viewglass).
+It is the maintained server-side fork of `LookinServer`, with additional protocol hardening and
+AI-oriented runtime actions.
 
-Official Website：https://lookin.work/
+Use this repository when you want your iOS app to work with:
 
-# Integration Guide
-To use Lookin macOS app, you need to integrate LookinServer (iOS Framework of Lookin) into your iOS project.
+- `viewglass` CLI
+- semantic actions such as `tap`, `long-press`, `scroll`, and `invoke`
+- high-resolution screenshots over the server protocol
 
-> **Warning**
-> 1. Never integrate LookinServer in Release building configuration.
-> 2. Do not use versions earlier than 1.0.6, as it contains a critical bug that could lead to online incidents in your project: https://qxh1ndiez2w.feishu.cn/wiki/Z9SpwT7zWiqvYvkBe7Lc6Disnab
+`ViewglassServer` keeps the product and module name `LookinServer` for compatibility, so existing
+projects can continue to `import LookinServer`.
 
-## via CocoaPods:
-### Swift Project
-`pod 'LookinServer', :subspecs => ['Swift'], :configurations => ['Debug']`
-### Objective-C Project
-`pod 'LookinServer', :configurations => ['Debug']`
-## via Swift Package Manager:
-`https://github.com/QMUI/LookinServer/`
+## Requirements
 
-# Repository
-LookinServer: https://github.com/QMUI/LookinServer
+- iOS or tvOS app
+- Debug-only integration
+- Xcode with Swift Package Manager or CocoaPods
 
-macOS app: https://github.com/hughkli/Lookin/
+Do not ship `ViewglassServer` in Release or App Store builds.
 
-# Tips
-- How to display custom information in Lookin: https://bytedance.larkoffice.com/docx/TRridRXeUoErMTxs94bcnGchnlb
-- How to display more member variables in Lookin: https://bytedance.larkoffice.com/docx/CKRndHqdeoub11xSqUZcMlFhnWe
-- How to turn on Swift optimization for Lookin: https://bytedance.larkoffice.com/docx/GFRLdzpeKoakeyxvwgCcZ5XdnTb
-- Documentation Collection: https://bytedance.larkoffice.com/docx/Yvv1d57XQoe5l0xZ0ZRc0ILfnWb
+## Install with Swift Package Manager
 
-# Acknowledgements
-https://qxh1ndiez2w.feishu.cn/docx/YIFjdE4gIolp3hxn1tGckiBxnWf
+Recommended.
 
----
-# 简介
-Lookin 可以查看与修改 iOS App 里的 UI 对象，类似于 Xcode 自带的 UI Inspector 工具，或另一款叫做 Reveal 的软件。
+In Xcode:
 
-官网：https://lookin.work/
+1. Open your app project.
+2. Go to `File > Add Package Dependencies...`
+3. Enter:
 
-# 安装 LookinServer Framework
-如果这是你的 iOS 项目第一次使用 Lookin，则需要先把 LookinServer 这款 iOS Framework 集成到你的 iOS 项目中。
+```text
+https://github.com/WZBbiao/ViewglassServer.git
+```
 
-> **Warning**
-> 
-> 1. 不要在 AppStore 模式下集成 LookinServer。
-> 2. 不要使用早于 1.0.6 的版本，因为它包含一个严重 Bug，可能导致线上事故: https://qxh1ndiez2w.feishu.cn/wiki/Z9SpwT7zWiqvYvkBe7Lc6Disnab
-## 通过 CocoaPods：
+4. Choose the latest tag, currently `1.2.9`.
+5. Add the `LookinServer` library to your app target.
+6. Link it only in `Debug` builds.
 
-### Swift 项目
-`pod 'LookinServer', :subspecs => ['Swift'], :configurations => ['Debug']`
-### Objective-C 项目
-`pod 'LookinServer', :configurations => ['Debug']`
+Example `Package.swift`:
 
-## 通过 Swift Package Manager:
-`https://github.com/QMUI/LookinServer/`
+```swift
+.package(url: "https://github.com/WZBbiao/ViewglassServer.git", from: "1.2.9")
+```
 
-# 源代码仓库
+Then add:
 
-iOS 端 LookinServer：https://github.com/QMUI/LookinServer
+```swift
+.product(name: "LookinServer", package: "ViewglassServer")
+```
 
-macOS 端软件：https://github.com/hughkli/Lookin/
+For local development, you can also use a path dependency:
 
-# 技巧
-- 如何在 Lookin 中展示自定义信息: https://bytedance.larkoffice.com/docx/TRridRXeUoErMTxs94bcnGchnlb
-- 如何在 Lookin 中展示更多成员变量: https://bytedance.larkoffice.com/docx/CKRndHqdeoub11xSqUZcMlFhnWe
-- 如何为 Lookin 开启 Swift 优化: https://bytedance.larkoffice.com/docx/GFRLdzpeKoakeyxvwgCcZ5XdnTb
-- 文档汇总：https://bytedance.larkoffice.com/docx/Yvv1d57XQoe5l0xZ0ZRc0ILfnWb
+```swift
+.package(path: "../ViewglassServer")
+```
 
-# 鸣谢
-https://qxh1ndiez2w.feishu.cn/docx/YIFjdE4gIolp3hxn1tGckiBxnWf
+## Install with CocoaPods
+
+If your project still uses CocoaPods:
+
+### Swift project
+
+```ruby
+pod 'LookinServer', :git => 'https://github.com/WZBbiao/ViewglassServer.git', :tag => '1.2.9', :subspecs => ['Swift'], :configurations => ['Debug']
+```
+
+### Objective-C project
+
+```ruby
+pod 'LookinServer', :git => 'https://github.com/WZBbiao/ViewglassServer.git', :tag => '1.2.9', :configurations => ['Debug']
+```
+
+If you need the `NoHook` variant:
+
+```ruby
+pod 'LookinServer/NoHook', :git => 'https://github.com/WZBbiao/ViewglassServer.git', :tag => '1.2.9', :configurations => ['Debug']
+```
+
+## Basic Usage
+
+Import `LookinServer` in your app and keep it available only in debug builds.
+
+Swift:
+
+```swift
+#if DEBUG
+import LookinServer
+#endif
+```
+
+Objective-C:
+
+```objc
+#if DEBUG
+@import LookinServer;
+#endif
+```
+
+Then launch your app on a simulator or device. `viewglass apps list` should discover it.
+
+## Relationship to Viewglass
+
+- `ViewglassServer` runs inside your iOS app
+- [`viewglass`](https://github.com/WZBbiao/viewglass) connects to it from macOS
+- both simulator and physical-device screenshots now go through the same server protocol
+
+## Compatibility Notes
+
+- The framework and import name remain `LookinServer`
+- This repository is a maintained fork of the original `QMUI/LookinServer`
+- The protocol includes additional safety checks to reduce app crashes during semantic actions
+
+## Warnings
+
+- Debug only
+- Do not include in App Store / Release builds
+- Keep client and server reasonably close in version when using newer action or screenshot features
+
+## 中文说明
+
+`ViewglassServer` 是 `Viewglass` 使用的 iOS 运行时服务端。它基于 `LookinServer` 继续维护，
+加入了更安全的语义操作能力和统一的高分截图协议。
+
+集成建议：
+
+- 优先使用 Swift Package Manager
+- 只在 `Debug` 配置中接入
+- 业务代码里仍然使用 `import LookinServer`
+
+SPM 地址：
+
+```text
+https://github.com/WZBbiao/ViewglassServer.git
+```
+
+CocoaPods 示例：
+
+```ruby
+pod 'LookinServer', :git => 'https://github.com/WZBbiao/ViewglassServer.git', :tag => '1.2.9', :configurations => ['Debug']
+```
+
+Swift 项目如果需要 Swift 支持：
+
+```ruby
+pod 'LookinServer', :git => 'https://github.com/WZBbiao/ViewglassServer.git', :tag => '1.2.9', :subspecs => ['Swift'], :configurations => ['Debug']
+```
