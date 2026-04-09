@@ -58,6 +58,7 @@
                               @(LookinRequestTypeSemanticTap),
                               @(LookinRequestTypeSemanticLongPress),
                               @(LookinRequestTypeHighResolutionScreenshot),
+                              @(LookinRequestTypeSemanticDismiss),
                               @(LookinPush_CanceHierarchyDetails),
                               nil];
         
@@ -351,6 +352,30 @@
             return;
         }
         [self _submitResponseWithData:imageData requestType:requestType tag:tag];
+    } else if (requestType == LookinRequestTypeSemanticDismiss) {
+        if (![object isKindOfClass:[NSDictionary class]]) {
+            [self _submitResponseWithError:LookinErr_Inner requestType:requestType tag:tag];
+            return;
+        }
+        NSDictionary<NSString *, NSNumber *> *params = object;
+        unsigned long oid = ((NSNumber *)params[@"oid"]).unsignedLongValue;
+        NSObject *targetObj = [NSObject lks_objectWithOid:oid];
+        if (!targetObj) {
+            [self _submitResponseWithError:LookinErr_ObjNotFound requestType:requestType tag:tag];
+            return;
+        }
+        if (![targetObj isKindOfClass:[UIViewController class]]) {
+            NSString *message = [NSString stringWithFormat:LKS_Localized(@"Semantic dismiss only supports UIViewController targets, got %@."), NSStringFromClass(targetObj.class)];
+            [self _submitResponseWithError:LookinErrorMake(message, @"") requestType:requestType tag:tag];
+            return;
+        }
+        NSError *error = nil;
+        NSString *detail = [self _performSemanticDismissOnViewController:(UIViewController *)targetObj error:&error];
+        if (error) {
+            [self _submitResponseWithError:error requestType:requestType tag:tag];
+            return;
+        }
+        [self _submitResponseWithData:@{@"detail": detail ?: @"Dismissed UIViewController"} requestType:requestType tag:tag];
     }
 }
 
@@ -432,6 +457,31 @@
         *error = LookinErrorMake(message, @"");
     }
     return nil;
+}
+
+- (NSString *)_performSemanticDismissOnViewController:(UIViewController *)viewController error:(NSError **)error {
+    __block NSError *blockError = nil;
+    __block NSString *detail = nil;
+    void (^work)(void) = ^{
+        @try {
+            [viewController dismissViewControllerAnimated:YES completion:nil];
+            detail = [NSString stringWithFormat:@"Dismissed %@.", NSStringFromClass(viewController.class)];
+        } @catch (NSException *exception) {
+            NSString *message = [NSString stringWithFormat:LKS_Localized(@"%@ raised an exception while dismissing."), NSStringFromClass(viewController.class)];
+            blockError = LookinErrorMake(message, exception.description ?: @"");
+        }
+    };
+
+    if ([NSThread isMainThread]) {
+        work();
+    } else {
+        dispatch_sync(dispatch_get_main_queue(), work);
+    }
+
+    if (error) {
+        *error = blockError;
+    }
+    return detail;
 }
 
 - (NSString *)_performSemanticLongPressOnView:(UIView *)view error:(NSError **)error {
