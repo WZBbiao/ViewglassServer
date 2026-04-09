@@ -85,6 +85,10 @@
         }
     }];
     
+    LookinAttributesGroup *runtimeMetadataGroup = [self _runtimeMetadataGroupForLayer:layer];
+    if (runtimeMetadataGroup) {
+        return [groups arrayByAddingObject:runtimeMetadataGroup];
+    }
     return groups;
 }
 
@@ -299,6 +303,81 @@
     }
     
     return attribute;
+}
+
++ (LookinAttributesGroup *)_runtimeMetadataGroupForLayer:(CALayer *)layer {
+    UIView *view = layer.lks_hostView;
+    if (!view) {
+        return nil;
+    }
+
+    NSMutableArray<LookinAttribute *> *attributes = [NSMutableArray array];
+    [self _appendStringAttribute:@"accessibilityIdentifier" value:view.accessibilityIdentifier to:attributes];
+    [self _appendStringAttribute:@"accessibilityLabel" value:view.accessibilityLabel to:attributes];
+    [self _appendStringAttribute:@"displayText" value:[self _displayTextForView:view] to:attributes];
+
+    if (attributes.count == 0) {
+        return nil;
+    }
+
+    LookinAttributesSection *section = [LookinAttributesSection new];
+    section.identifier = LookinAttrSec_UserCustom;
+    section.attributes = attributes.copy;
+
+    LookinAttributesGroup *group = [LookinAttributesGroup new];
+    group.identifier = LookinAttrGroup_UserCustom;
+    group.userCustomTitle = @"viewglass_runtime";
+    group.attrSections = @[section];
+    return group;
+}
+
++ (void)_appendStringAttribute:(NSString *)identifier value:(NSString *)value to:(NSMutableArray<LookinAttribute *> *)attributes {
+    if (identifier.length == 0 || value.length == 0) {
+        return;
+    }
+
+    LookinAttribute *attribute = [LookinAttribute new];
+    attribute.identifier = identifier;
+    attribute.displayTitle = identifier;
+    attribute.attrType = LookinAttrTypeNSString;
+    attribute.value = value;
+    [attributes addObject:attribute];
+}
+
++ (NSString *)_displayTextForView:(UIView *)view {
+    if ([view isKindOfClass:[UIButton class]]) {
+        UIButton *button = (UIButton *)view;
+        NSString *title = [button titleForState:UIControlStateNormal];
+        if (title.length > 0) {
+            return title;
+        }
+    }
+
+    if ([view isKindOfClass:[UILabel class]]) {
+        NSString *text = ((UILabel *)view).text;
+        if (text.length > 0) {
+            return text;
+        }
+    }
+
+    if ([view isKindOfClass:[UITextField class]]) {
+        UITextField *textField = (UITextField *)view;
+        if (textField.text.length > 0) {
+            return textField.text;
+        }
+        if (textField.placeholder.length > 0) {
+            return textField.placeholder;
+        }
+    }
+
+    if ([view isKindOfClass:[UITextView class]]) {
+        UITextView *textView = (UITextView *)view;
+        if (textView.text.length > 0) {
+            return textView.text;
+        }
+    }
+
+    return nil;
 }
 
 @end
