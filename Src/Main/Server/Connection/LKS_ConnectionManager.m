@@ -21,7 +21,11 @@ NSString *const LKS_ConnectionDidEndNotificationName = @"LKS_ConnectionDidEndNot
 
 @interface LKS_ConnectionManager () <Lookin_PTChannelDelegate>
 
-@property(nonatomic, weak) Lookin_PTChannel *peerChannel_;
+/// 正在监听端口、等待客户端连接的 channel（非 peer）
+@property(nonatomic, strong) Lookin_PTChannel *listeningChannel_;
+
+/// 当前所有已建立连接的 peer channels（GUI + CLI 可以同时存在）
+@property(nonatomic, strong) NSMutableArray<Lookin_PTChannel *> *peerChannels_;
 
 @property(nonatomic, strong) LKS_RequestHandler *requestHandler;
 
@@ -46,7 +50,9 @@ NSString *const LKS_ConnectionDidEndNotificationName = @"LKS_ConnectionDidEndNot
 - (instancetype)init {
     if (self = [super init]) {
         NSLog(@"LookinServer - Will launch. Framework version: %@", LOOKIN_SERVER_READABLE_VERSION);
-        
+
+        _peerChannels_ = [NSMutableArray array];
+
         [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(_handleApplicationDidBecomeActive) name:UIApplicationDidBecomeActiveNotification object:nil];
         [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(_handleWillResignActiveNotification) name:UIApplicationWillResignActiveNotification object:nil];
         
@@ -67,10 +73,12 @@ NSString *const LKS_ConnectionDidEndNotificationName = @"LKS_ConnectionDidEndNot
 
 - (void)_handleWillResignActiveNotification {
     self.applicationIsActive = NO;
-    
-    if (self.peerChannel_ && ![self.peerChannel_ isConnected]) {
-        [self.peerChannel_ close];
-        self.peerChannel_ = nil;
+
+    for (Lookin_PTChannel *channel in [self.peerChannels_ copy]) {
+        if (![channel isConnected]) {
+            [channel close];
+            [self.peerChannels_ removeObject:channel];
+        }
     }
 }
 
@@ -80,14 +88,12 @@ NSString *const LKS_ConnectionDidEndNotificationName = @"LKS_ConnectionDidEndNot
 }
 
 - (void)searchPortToListenIfNoConnection {
-    if ([self.peerChannel_ isConnected]) {
-        NSLog(@"LookinServer - Abort to search ports. Already has connected channel.");
+    if (self.listeningChannel_) {
+        NSLog(@"LookinServer - Abort to search ports. Already listening on a port.");
         return;
     }
     NSLog(@"LookinServer - Searching port to listen...");
-    [self.peerChannel_ close];
-    self.peerChannel_ = nil;
-    
+
     if ([self isiOSAppOnMac]) {
         [self _tryToListenOnPortFrom:LookinSimulatorIPv4PortNumberStart to:LookinSimulatorIPv4PortNumberEnd current:LookinSimulatorIPv4PortNumberStart];
     } else {
@@ -139,34 +145,37 @@ NSString *const LKS_ConnectionDidEndNotificationName = @"LKS_ConnectionDidEndNot
             
         } else {
             // 成功
-            NSLog(@"LookinServer - Connected successfully on 127.0.0.1:%d", currentPort);
-            // 此时 peerChannel_ 状态为 listening
-            self.peerChannel_ = channel;
+            NSLog(@"LookinServer - Listening on 127.0.0.1:%d", currentPort);
+            // 此时 channel 状态为 listening，独立保存，不计入 peerChannels_
+            self.listeningChannel_ = channel;
         }
     }];
 }
 
 - (void)dealloc {
-    if (self.peerChannel_) {
-        [self.peerChannel_ close];
+    [self.listeningChannel_ close];
+    for (Lookin_PTChannel *channel in self.peerChannels_) {
+        [channel close];
     }
     [[NSNotificationCenter defaultCenter] removeObserver:self];
 }
 
-- (void)respond:(LookinConnectionResponseAttachment *)data requestType:(uint32_t)requestType tag:(uint32_t)tag {
-    [self _sendData:data frameOfType:requestType tag:tag];
+- (void)respond:(LookinConnectionResponseAttachment *)data requestType:(uint32_t)requestType tag:(uint32_t)tag channel:(Lookin_PTChannel *)channel {
+    [self _sendData:data frameOfType:requestType tag:tag toChannel:channel];
 }
 
 - (void)pushData:(NSObject *)data type:(uint32_t)type {
-    [self _sendData:data frameOfType:type tag:0];
+    for (Lookin_PTChannel *channel in [self.peerChannels_ copy]) {
+        [self _sendData:data frameOfType:type tag:0 toChannel:channel];
+    }
 }
 
-- (void)_sendData:(NSObject *)data frameOfType:(uint32_t)frameOfType tag:(uint32_t)tag {
-    if (self.peerChannel_) {
+- (void)_sendData:(NSObject *)data frameOfType:(uint32_t)frameOfType tag:(uint32_t)tag toChannel:(Lookin_PTChannel *)channel {
+    if (channel) {
         NSData *archivedData = [NSKeyedArchiver archivedDataWithRootObject:data];
         dispatch_data_t payload = [archivedData createReferencingDispatchData];
-        
-        [self.peerChannel_ sendFrameOfType:frameOfType tag:tag withPayload:payload callback:^(NSError *error) {
+
+        [channel sendFrameOfType:frameOfType tag:tag withPayload:payload callback:^(NSError *error) {
             if (error) {
             }
         }];
@@ -176,7 +185,7 @@ NSString *const LKS_ConnectionDidEndNotificationName = @"LKS_ConnectionDidEndNot
 #pragma mark - Lookin_PTChannelDelegate
 
 - (BOOL)ioFrameChannel:(Lookin_PTChannel*)channel shouldAcceptFrameOfType:(uint32_t)type tag:(uint32_t)tag payloadSize:(uint32_t)payloadSize {
-    if (channel != self.peerChannel_) {
+    if (![self.peerChannels_ containsObject:channel]) {
         return NO;
     } else if ([self.requestHandler canHandleRequestType:type]) {
         return YES;
@@ -197,32 +206,46 @@ NSString *const LKS_ConnectionDidEndNotificationName = @"LKS_ConnectionDidEndNot
             object = unarchivedObject;
         }
     }
-    [self.requestHandler handleRequestType:type tag:tag object:object];
+    [self.requestHandler handleRequestType:type tag:tag object:object channel:channel];
 }
 
 /// 当 Client 端链接成功时，该方法会被调用，然后 channel 的状态会变成 connected
 - (void)ioFrameChannel:(Lookin_PTChannel*)channel didAcceptConnection:(Lookin_PTChannel*)otherChannel fromAddress:(Lookin_PTAddress*)address {
-    NSLog(@"LookinServer - channel:%@, acceptConnection:%@", channel.debugTag, otherChannel.debugTag);
+    NSLog(@"LookinServer - New client connected. Listening channel:%@ peer:%@", channel.debugTag, otherChannel.debugTag);
 
-    Lookin_PTChannel *previousChannel = self.peerChannel_;
-    
     otherChannel.targetPort = address.port;
-    self.peerChannel_ = otherChannel;
-    
-    [previousChannel cancel];
+    [self.peerChannels_ addObject:otherChannel];
+    NSLog(@"LookinServer - Total connected clients: %lu", (unsigned long)self.peerChannels_.count);
+
+    // 不在这里主动 nil listeningChannel_，也不在这里重新监听。
+    // Peertalk 在 accept 后会内部 cancel 监听 channel，触发 didEndWithError，
+    // 届时再重新监听以接受下一个客户端（避免 socket 尚未释放就绑定同一端口）。
 }
 
-/// 当连接过 Lookin 客户端，然后 Lookin 客户端又被关闭时，会走到这里
+/// 连接断开时的处理
 - (void)ioFrameChannel:(Lookin_PTChannel*)channel didEndWithError:(NSError*)error {
-    if (self.peerChannel_ != channel) {
-        // Client 端第一次连接上时，之前 listen 的 port 会被 Peertalk 内部 cancel（并在 didAcceptConnection 方法里给业务抛一个新建的 connected 状态的 channel），那个被 cancel 的 channel 会走到这里
-        NSLog(@"LookinServer - Ignore channel%@ end.", channel.debugTag);
+    if (channel == self.listeningChannel_) {
+        // 监听 channel 结束（Peertalk 在 accept 一个新连接后会内部 cancel 它）
+        NSLog(@"LookinServer - Listening channel ended: %@", channel.debugTag);
+        self.listeningChannel_ = nil;
+        // 现在老 socket 已释放，可以安全地重新绑定同一端口、继续等待下一个客户端
+        [self searchPortToListenIfNoConnection];
         return;
     }
-    // Client 端关闭时，会走到这里
-    NSLog(@"LookinServer - channel%@ DidEndWithError:%@", channel.debugTag, error);
-    
+
+    if (![self.peerChannels_ containsObject:channel]) {
+        NSLog(@"LookinServer - Ignore unknown channel end: %@", channel.debugTag);
+        return;
+    }
+
+    // 某个 peer（GUI 或 CLI）断开了
+    [self.peerChannels_ removeObject:channel];
+    NSLog(@"LookinServer - Client disconnected:%@ error:%@ remaining:%lu",
+          channel.debugTag, error, (unsigned long)self.peerChannels_.count);
+
     [[NSNotificationCenter defaultCenter] postNotificationName:LKS_ConnectionDidEndNotificationName object:self];
+
+    // 确保持续处于监听状态，等待下一个客户端
     [self searchPortToListenIfNoConnection];
 }
 
