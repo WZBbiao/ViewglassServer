@@ -61,6 +61,7 @@
                               @(LookinRequestTypeHighResolutionScreenshot),
                               @(LookinRequestTypeSemanticDismiss),
                               @(LookinRequestTypeSemanticTextInput),
+                              @(LookinRequestTypeSemanticScrollAnimated),
                               @(LookinPush_CanceHierarchyDetails),
                               nil];
         
@@ -404,6 +405,36 @@
             return;
         }
         [self _submitResponseWithData:@{@"detail": detail ?: @"Inserted semantic text"} requestType:requestType tag:tag channel:channel];
+    } else if (requestType == LookinRequestTypeSemanticScrollAnimated) {
+        if (![object isKindOfClass:[NSDictionary class]]) {
+            [self _submitResponseWithError:LookinErr_Inner requestType:requestType tag:tag channel:channel];
+            return;
+        }
+        NSDictionary<NSString *, id> *params = object;
+        unsigned long oid = ((NSNumber *)params[@"oid"]).unsignedLongValue;
+        CGFloat x = ((NSNumber *)params[@"x"]).doubleValue;
+        CGFloat y = ((NSNumber *)params[@"y"]).doubleValue;
+        NSObject *targetObj = [NSObject lks_objectWithOid:oid];
+        if (!targetObj) {
+            [self _submitResponseWithError:LookinErr_ObjNotFound requestType:requestType tag:tag channel:channel];
+            return;
+        }
+        if (![targetObj isKindOfClass:[UIScrollView class]]) {
+            NSString *message = [NSString stringWithFormat:LKS_Localized(@"SemanticScrollAnimated only supports UIScrollView targets, got %@."), NSStringFromClass(targetObj.class)];
+            [self _submitResponseWithError:LookinErrorMake(message, @"") requestType:requestType tag:tag channel:channel];
+            return;
+        }
+        UIScrollView *scrollView = (UIScrollView *)targetObj;
+        CGPoint targetOffset = CGPointMake(x, y);
+        // UIKit call must be on the main thread. Defer the TCP response until after the
+        // animation finishes: UIScrollView uses Apple's standard ~0.3 s timing curve.
+        dispatch_async(dispatch_get_main_queue(), ^{
+            [scrollView setContentOffset:targetOffset animated:YES];
+            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(350 * NSEC_PER_MSEC)), dispatch_get_main_queue(), ^{
+                NSString *detail = [NSString stringWithFormat:@"contentOffset -> (%.1f, %.1f)", x, y];
+                [self _submitResponseWithData:@{@"detail": detail} requestType:requestType tag:tag channel:channel];
+            });
+        });
     }
 }
 
