@@ -223,12 +223,13 @@
             return;
         }
 
+        NSArray<NSString *> *args = param[@"args"] ?: @[];
         SEL targetSelector = NSSelectorFromString(text);
         if (targetSelector && [targerObj respondsToSelector:targetSelector]) {
             NSString *resultDescription;
             NSObject *resultObject;
             NSError *error;
-            [self _handleInvokeWithObject:targerObj selector:targetSelector resultDescription:&resultDescription resultObject:&resultObject error:&error];
+            [self _handleInvokeWithObject:targerObj selector:targetSelector args:args resultDescription:&resultDescription resultObject:&resultObject error:&error];
             if (error) {
                 [self _submitResponseWithError:error requestType:requestType tag:tag channel:channel];
                 return;
@@ -892,7 +893,107 @@
     return [array lookin_sortedArrayByStringLength];
 }
 
-- (void)_handleInvokeWithObject:(NSObject *)obj selector:(SEL)selector resultDescription:(NSString **)description resultObject:(LookinObject **)resultObject error:(NSError **)error {
+/// Coerce a string value to the ObjC type described by typeEncoding and set it as an argument
+/// on invocation at the given index. Returns NO and sets *error on failure.
+- (BOOL)_setInvocation:(NSInvocation *)invocation
+           argAtIndex:(NSUInteger)index
+         typeEncoding:(const char *)typeEncoding
+          valueString:(NSString *)valueString
+                error:(NSError **)error {
+    if (strcmp(typeEncoding, @encode(char)) == 0) {
+        char v = (char)[valueString integerValue];
+        [invocation setArgument:&v atIndex:index];
+    } else if (strcmp(typeEncoding, @encode(int)) == 0) {
+        int v = (int)[valueString integerValue];
+        [invocation setArgument:&v atIndex:index];
+    } else if (strcmp(typeEncoding, @encode(short)) == 0) {
+        short v = (short)[valueString integerValue];
+        [invocation setArgument:&v atIndex:index];
+    } else if (strcmp(typeEncoding, @encode(long)) == 0) {
+        long v = (long)[valueString longLongValue];
+        [invocation setArgument:&v atIndex:index];
+    } else if (strcmp(typeEncoding, @encode(long long)) == 0) {
+        long long v = [valueString longLongValue];
+        [invocation setArgument:&v atIndex:index];
+    } else if (strcmp(typeEncoding, @encode(unsigned char)) == 0) {
+        unsigned char v = (unsigned char)[valueString integerValue];
+        [invocation setArgument:&v atIndex:index];
+    } else if (strcmp(typeEncoding, @encode(unsigned int)) == 0) {
+        unsigned int v = (unsigned int)[valueString longLongValue];
+        [invocation setArgument:&v atIndex:index];
+    } else if (strcmp(typeEncoding, @encode(unsigned short)) == 0) {
+        unsigned short v = (unsigned short)[valueString longLongValue];
+        [invocation setArgument:&v atIndex:index];
+    } else if (strcmp(typeEncoding, @encode(unsigned long)) == 0) {
+        unsigned long v = (unsigned long)[valueString longLongValue];
+        [invocation setArgument:&v atIndex:index];
+    } else if (strcmp(typeEncoding, @encode(unsigned long long)) == 0) {
+        unsigned long long v = strtoull([valueString UTF8String], NULL, 0);
+        [invocation setArgument:&v atIndex:index];
+    } else if (strcmp(typeEncoding, @encode(float)) == 0) {
+        float v = [valueString floatValue];
+        [invocation setArgument:&v atIndex:index];
+    } else if (strcmp(typeEncoding, @encode(double)) == 0) {
+        double v = [valueString doubleValue];
+        [invocation setArgument:&v atIndex:index];
+    } else if (strcmp(typeEncoding, @encode(BOOL)) == 0) {
+        BOOL v = ([valueString isEqualToString:@"YES"] || [valueString isEqualToString:@"true"] || [valueString isEqualToString:@"1"]) ? YES : [valueString boolValue];
+        [invocation setArgument:&v atIndex:index];
+    } else if (strcmp(typeEncoding, @encode(CGPoint)) == 0) {
+        CGPoint v = CGPointFromString(valueString);
+        [invocation setArgument:&v atIndex:index];
+    } else if (strcmp(typeEncoding, @encode(CGSize)) == 0) {
+        CGSize v = CGSizeFromString(valueString);
+        [invocation setArgument:&v atIndex:index];
+    } else if (strcmp(typeEncoding, @encode(CGRect)) == 0) {
+        CGRect v = CGRectFromString(valueString);
+        [invocation setArgument:&v atIndex:index];
+    } else if (strcmp(typeEncoding, @encode(CGAffineTransform)) == 0) {
+        CGAffineTransform v = CGAffineTransformFromString(valueString);
+        [invocation setArgument:&v atIndex:index];
+    } else if (strcmp(typeEncoding, @encode(UIEdgeInsets)) == 0) {
+        UIEdgeInsets v = UIEdgeInsetsFromString(valueString);
+        [invocation setArgument:&v atIndex:index];
+    } else {
+        // Handle object types and NSDirectionalEdgeInsets
+        if (@available(iOS 11.0, *)) {
+            if (strcmp(typeEncoding, @encode(NSDirectionalEdgeInsets)) == 0) {
+                NSDirectionalEdgeInsets v = NSDirectionalEdgeInsetsFromString(valueString);
+                [invocation setArgument:&v atIndex:index];
+                return YES;
+            }
+        }
+        NSString *typeStr = [[NSString alloc] lookin_safeInitWithUTF8String:typeEncoding];
+        if ([typeStr hasPrefix:@"@"]) {
+            __unsafe_unretained NSObject *objValue = nil;
+            if ([typeStr isEqualToString:@"@"] || [typeStr isEqualToString:@"@\"NSString\""]) {
+                objValue = valueString;
+            } else if ([typeStr isEqualToString:@"@\"NSNumber\""]) {
+                objValue = @([valueString doubleValue]);
+            } else {
+                // Try to resolve by OID
+                long long possibleOid = [valueString longLongValue];
+                if (possibleOid > 0 && [valueString longLongValue] != 0) {
+                    objValue = [NSObject lks_objectWithOid:(unsigned long)possibleOid];
+                    if (!objValue) {
+                        *error = LookinErrorMake([NSString stringWithFormat:LKS_Localized(@"No object found with OID %lld."), possibleOid], @"");
+                        return NO;
+                    }
+                } else {
+                    *error = LookinErrorMake([NSString stringWithFormat:LKS_Localized(@"Can't convert \"%@\" to %@. Provide an OID (integer) to reference objects."), valueString, typeStr], @"");
+                    return NO;
+                }
+            }
+            [invocation setArgument:&objValue atIndex:index];
+        } else {
+            *error = LookinErrorMake([NSString stringWithFormat:LKS_Localized(@"Unsupported argument type encoding \"%s\"."), typeEncoding], @"");
+            return NO;
+        }
+    }
+    return YES;
+}
+
+- (void)_handleInvokeWithObject:(NSObject *)obj selector:(SEL)selector args:(NSArray<NSString *> *)args resultDescription:(NSString **)description resultObject:(LookinObject **)resultObject error:(NSError **)error {
     if (![obj respondsToSelector:selector]) {
         NSString *message = [NSString stringWithFormat:LKS_Localized(@"%@ doesn't respond to %@."), NSStringFromClass(obj.class), NSStringFromSelector(selector)];
         *error = LookinErrorMake(message, @"");
@@ -904,14 +1005,30 @@
         *error = LookinErrorMake(message, @"");
         return;
     }
-    if (signature.numberOfArguments > 2) {
-        *error = LookinErrorMake(LKS_Localized(@"Lookin doesn't support invoking methods with arguments yet."), @"");
+    // numberOfArguments includes self (index 0) and _cmd (index 1); user args start at index 2
+    NSUInteger expectedArgCount = signature.numberOfArguments - 2;
+    if (args.count != expectedArgCount) {
+        *error = LookinErrorMake([NSString stringWithFormat:LKS_Localized(@"%@ expects %lu argument(s), but %lu were provided."),
+                                  NSStringFromSelector(selector),
+                                  (unsigned long)expectedArgCount,
+                                  (unsigned long)args.count], @"");
         return;
     }
-    
+
     NSInvocation *invocation = [NSInvocation invocationWithMethodSignature:signature];
     [invocation setTarget:obj];
     [invocation setSelector:selector];
+    [invocation retainArguments];
+
+    for (NSUInteger i = 0; i < expectedArgCount; i++) {
+        const char *argType = [signature getArgumentTypeAtIndex:i + 2];
+        NSError *setError = nil;
+        if (![self _setInvocation:invocation argAtIndex:i + 2 typeEncoding:argType valueString:args[i] error:&setError]) {
+            *error = setError;
+            return;
+        }
+    }
+
     @try {
         [invocation invoke];
     } @catch (NSException *exception) {
