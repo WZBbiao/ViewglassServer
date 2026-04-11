@@ -976,17 +976,20 @@
                 if (possibleOid > 0 && [valueString longLongValue] != 0) {
                     objValue = [NSObject lks_objectWithOid:(unsigned long)possibleOid];
                     if (!objValue) {
-                        *error = LookinErrorMake([NSString stringWithFormat:LKS_Localized(@"No object found with OID %lld."), possibleOid], @"");
+                        NSString *notFoundMsg = [NSString stringWithFormat:LKS_Localized(@"No object found with OID %lld."), possibleOid];
+                        *error = LookinErrorMake(notFoundMsg, @"");
                         return NO;
                     }
                 } else {
-                    *error = LookinErrorMake([NSString stringWithFormat:LKS_Localized(@"Can't convert \"%@\" to %@. Provide an OID (integer) to reference objects."), valueString, typeStr], @"");
+                    NSString *cantConvertMsg = [NSString stringWithFormat:LKS_Localized(@"Can't convert \"%@\" to %@. Provide an OID (integer) to reference objects."), valueString, typeStr];
+                    *error = LookinErrorMake(cantConvertMsg, @"");
                     return NO;
                 }
             }
             [invocation setArgument:&objValue atIndex:index];
         } else {
-            *error = LookinErrorMake([NSString stringWithFormat:LKS_Localized(@"Unsupported argument type encoding \"%s\"."), typeEncoding], @"");
+            NSString *unsupportedMsg = [NSString stringWithFormat:LKS_Localized(@"Unsupported argument type encoding \"%s\"."), typeEncoding];
+            *error = LookinErrorMake(unsupportedMsg, @"");
             return NO;
         }
     }
@@ -1008,10 +1011,11 @@
     // numberOfArguments includes self (index 0) and _cmd (index 1); user args start at index 2
     NSUInteger expectedArgCount = signature.numberOfArguments - 2;
     if (args.count != expectedArgCount) {
-        *error = LookinErrorMake([NSString stringWithFormat:LKS_Localized(@"%@ expects %lu argument(s), but %lu were provided."),
-                                  NSStringFromSelector(selector),
-                                  (unsigned long)expectedArgCount,
-                                  (unsigned long)args.count], @"");
+        NSString *argCountMsg = [NSString stringWithFormat:LKS_Localized(@"%@ expects %lu argument(s), but %lu were provided."),
+                                 NSStringFromSelector(selector),
+                                 (unsigned long)expectedArgCount,
+                                 (unsigned long)args.count];
+        *error = LookinErrorMake(argCountMsg, @"");
         return;
     }
 
