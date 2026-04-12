@@ -19,13 +19,16 @@
 
 NSString *const LKS_ConnectionDidEndNotificationName = @"LKS_ConnectionDidEndNotificationName";
 
-@interface LKS_ConnectionManager () <Lookin_PTChannelDelegate>
+@interface LKS_ConnectionManager () <Lookin_PTChannelDelegate, NSNetServiceDelegate>
 
 /// 正在监听端口、等待客户端连接的 channel（非 peer）
 @property(nonatomic, strong) Lookin_PTChannel *listeningChannel_;
 
 /// 当前所有已建立连接的 peer channels（GUI + CLI 可以同时存在）
 @property(nonatomic, strong) NSMutableArray<Lookin_PTChannel *> *peerChannels_;
+
+/// Bonjour service for zero-config LAN discovery (like Xcode wireless)
+@property(nonatomic, strong) NSNetService *bonjourService_;
 
 @property(nonatomic, strong) LKS_RequestHandler *requestHandler;
 
@@ -73,6 +76,7 @@ NSString *const LKS_ConnectionDidEndNotificationName = @"LKS_ConnectionDidEndNot
 
 - (void)_handleWillResignActiveNotification {
     self.applicationIsActive = NO;
+    [self _stopBonjourService];
 
     for (Lookin_PTChannel *channel in [self.peerChannels_ copy]) {
         if (![channel isConnected]) {
@@ -125,39 +129,78 @@ NSString *const LKS_ConnectionDidEndNotificationName = @"LKS_ConnectionDidEndNot
 - (void)_tryToListenOnPortFrom:(int)fromPort to:(int)toPort current:(int)currentPort  {
     Lookin_PTChannel *channel = [Lookin_PTChannel channelWithDelegate:self];
     channel.targetPort = currentPort;
-    [channel listenOnPort:currentPort IPv4Address:INADDR_LOOPBACK callback:^(NSError *error) {
+    [channel listenOnPort:currentPort IPv4Address:INADDR_ANY callback:^(NSError *error) {
         if (error) {
             if (error.code == 48) {
                 // 该地址已被占用
             } else {
                 // 未知失败
             }
-            
+
             if (currentPort < toPort) {
                 // 尝试下一个端口
-                NSLog(@"LookinServer - 127.0.0.1:%d is unavailable(%@). Will try anothor address ...", currentPort, error);
+                NSLog(@"LookinServer - 0.0.0.0:%d is unavailable(%@). Will try anothor address ...", currentPort, error);
                 [self _tryToListenOnPortFrom:fromPort to:toPort current:(currentPort + 1)];
             } else {
                 // 所有端口都尝试完毕，全部失败
-                NSLog(@"LookinServer - 127.0.0.1:%d is unavailable(%@).", currentPort, error);
+                NSLog(@"LookinServer - 0.0.0.0:%d is unavailable(%@).", currentPort, error);
                 NSLog(@"LookinServer - Connect failed in the end.");
             }
-            
+
         } else {
             // 成功
-            NSLog(@"LookinServer - Listening on 127.0.0.1:%d", currentPort);
+            NSLog(@"LookinServer - Listening on 0.0.0.0:%d (WiFi/USB)", currentPort);
             // 此时 channel 状态为 listening，独立保存，不计入 peerChannels_
             self.listeningChannel_ = channel;
+            [self _publishBonjourServiceOnPort:currentPort];
         }
     }];
 }
 
 - (void)dealloc {
+    [self _stopBonjourService];
     [self.listeningChannel_ close];
     for (Lookin_PTChannel *channel in self.peerChannels_) {
         [channel close];
     }
     [[NSNotificationCenter defaultCenter] removeObserver:self];
+}
+
+#pragma mark - Bonjour
+
+/// Publish a Bonjour service so CLI/agents on the LAN can auto-discover this app.
+- (void)_publishBonjourServiceOnPort:(int)port {
+    [self _stopBonjourService];
+    NSString *bundleId = [[NSBundle mainBundle] bundleIdentifier] ?: @"unknown";
+    self.bonjourService_ = [[NSNetService alloc] initWithDomain:@""
+                                                          type:@"_lookin._tcp."
+                                                          name:bundleId
+                                                          port:port];
+    // TXT record carries metadata for the CLI to display before full handshake.
+    NSDictionary<NSString *, NSData *> *txt = @{
+        @"bundleId": [bundleId dataUsingEncoding:NSUTF8StringEncoding],
+        @"appName": [([[NSBundle mainBundle] objectForInfoDictionaryKey:@"CFBundleName"] ?: @"") dataUsingEncoding:NSUTF8StringEncoding],
+        @"version": [LOOKIN_SERVER_READABLE_VERSION dataUsingEncoding:NSUTF8StringEncoding]
+    };
+    [self.bonjourService_ setTXTRecordData:[NSNetService dataFromTXTRecordDictionary:txt]];
+    self.bonjourService_.delegate = self;
+    [self.bonjourService_ publish];
+    NSLog(@"LookinServer - Publishing Bonjour _lookin._tcp. on port %d (name: %@)", port, bundleId);
+}
+
+- (void)_stopBonjourService {
+    if (self.bonjourService_) {
+        [self.bonjourService_ stop];
+        self.bonjourService_ = nil;
+    }
+}
+
+- (void)netServiceDidPublish:(NSNetService *)sender {
+    NSLog(@"LookinServer - Bonjour published: %@ on port %d", sender.name, (int)sender.port);
+}
+
+- (void)netService:(NSNetService *)sender didNotPublish:(NSDictionary<NSString *, NSNumber *> *)errorDict {
+    NSLog(@"LookinServer - Bonjour publish failed: %@", errorDict);
 }
 
 - (void)respond:(LookinConnectionResponseAttachment *)data requestType:(uint32_t)requestType tag:(uint32_t)tag channel:(Lookin_PTChannel *)channel {
