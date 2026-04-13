@@ -4,7 +4,7 @@ Pod::Spec.new do |spec|
   spec.summary      = "The iOS runtime server used by Viewglass."
   spec.description  = "Embed this framework into your debug iOS project to enable Viewglass runtime inspection and actions."
   spec.homepage     = "https://github.com/WZBbiao/ViewglassServer"
-  spec.license      = "GPL-3.0"
+  spec.license      = { :type => "MIT", :file => "LICENSE" }
   spec.author       = { "WZBbiao" => "544856638@qq.com" }
   spec.ios.deployment_target  = "9.0"
   spec.tvos.deployment_target  = '9.0'
