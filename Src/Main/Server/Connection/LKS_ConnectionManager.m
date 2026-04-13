@@ -99,9 +99,9 @@ NSString *const LKS_ConnectionDidEndNotificationName = @"LKS_ConnectionDidEndNot
     NSLog(@"LookinServer - Searching port to listen...");
 
     if ([self isiOSAppOnMac]) {
-        [self _tryToListenOnPortFrom:LookinSimulatorIPv4PortNumberStart to:LookinSimulatorIPv4PortNumberEnd current:LookinSimulatorIPv4PortNumberStart];
+        [self _tryToListenOnPortFrom:LookinSimulatorIPv4PortNumberStart to:LookinSimulatorIPv4PortNumberEnd current:LookinSimulatorIPv4PortNumberStart retryCount:0];
     } else {
-        [self _tryToListenOnPortFrom:LookinUSBDeviceIPv4PortNumberStart to:LookinUSBDeviceIPv4PortNumberEnd current:LookinUSBDeviceIPv4PortNumberStart];
+        [self _tryToListenOnPortFrom:LookinUSBDeviceIPv4PortNumberStart to:LookinUSBDeviceIPv4PortNumberEnd current:LookinUSBDeviceIPv4PortNumberStart retryCount:0];
     }
 }
 
@@ -126,25 +126,29 @@ NSString *const LKS_ConnectionDidEndNotificationName = @"LKS_ConnectionDidEndNot
 #endif
 }
 
-- (void)_tryToListenOnPortFrom:(int)fromPort to:(int)toPort current:(int)currentPort  {
+- (void)_tryToListenOnPortFrom:(int)fromPort to:(int)toPort current:(int)currentPort retryCount:(int)retryCount {
     Lookin_PTChannel *channel = [Lookin_PTChannel channelWithDelegate:self];
     channel.targetPort = currentPort;
     [channel listenOnPort:currentPort IPv4Address:INADDR_ANY callback:^(NSError *error) {
         if (error) {
-            if (error.code == 48) {
-                // 该地址已被占用
-            } else {
-                // 未知失败
-            }
-
             if (currentPort < toPort) {
                 // 尝试下一个端口
                 NSLog(@"LookinServer - 0.0.0.0:%d is unavailable(%@). Will try anothor address ...", currentPort, error);
-                [self _tryToListenOnPortFrom:fromPort to:toPort current:(currentPort + 1)];
+                [self _tryToListenOnPortFrom:fromPort to:toPort current:(currentPort + 1) retryCount:retryCount];
             } else {
                 // 所有端口都尝试完毕，全部失败
-                NSLog(@"LookinServer - 0.0.0.0:%d is unavailable(%@).", currentPort, error);
-                NSLog(@"LookinServer - Connect failed in the end.");
+                // 可能是 Peertalk accept 连接后旧 socket 尚未完全释放导致的竞争，等待一段时间后重试
+                if (retryCount < 3) {
+                    NSTimeInterval delay = 0.3 * (retryCount + 1);
+                    NSLog(@"LookinServer - All ports unavailable. Retry %d/3 in %.1fs...", retryCount + 1, delay);
+                    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(delay * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+                        if (!self.listeningChannel_) {
+                            [self _tryToListenOnPortFrom:fromPort to:toPort current:fromPort retryCount:retryCount + 1];
+                        }
+                    });
+                } else {
+                    NSLog(@"LookinServer - Connect failed in the end after %d retries.", retryCount);
+                }
             }
 
         } else {
