@@ -85,6 +85,21 @@
         item.viewObject = [LookinObject instanceWithObject:view];
         item.eventHandlers = [LKS_EventHandlerMaker makeForView:view];
         item.backgroundColor = view.backgroundColor;
+
+        // Always populate customDisplayTitle for text-based search (e.g. CLI query text:"...")
+        // even when hasAttrList is NO (fast hierarchy fetch without full attribute data).
+        if (item.customDisplayTitle.length == 0) {
+            if ([view isKindOfClass:[UILabel class]]) {
+                item.customDisplayTitle = ((UILabel *)view).text;
+            } else if ([view isKindOfClass:[UIButton class]]) {
+                item.customDisplayTitle = [(UIButton *)view titleForState:UIControlStateNormal];
+            } else if ([view isKindOfClass:[UITextField class]]) {
+                UITextField *tf = (UITextField *)view;
+                item.customDisplayTitle = tf.text.length > 0 ? tf.text : tf.placeholder;
+            } else if ([view isKindOfClass:[UITextView class]]) {
+                item.customDisplayTitle = ((UITextView *)view).text;
+            }
+        }
         
         UIViewController* vc = [view lks_findHostViewController];
         if (vc) {
