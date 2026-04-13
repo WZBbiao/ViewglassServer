@@ -503,6 +503,20 @@
             }
         }
 
+        if ([currentView isKindOfClass:[UITableViewCell class]]) {
+            NSString *detail = [self _performTableViewCellTap:(UITableViewCell *)currentView error:error];
+            if (detail || (error && *error)) {
+                return detail;
+            }
+        }
+
+        if ([currentView isKindOfClass:[UICollectionViewCell class]]) {
+            NSString *detail = [self _performCollectionViewCellTap:(UICollectionViewCell *)currentView error:error];
+            if (detail || (error && *error)) {
+                return detail;
+            }
+        }
+
         NSString *detail = [self _performTapGestureOnView:currentView error:error];
         if (detail || (error && *error)) {
             return detail;
@@ -632,6 +646,112 @@
         *error = blockError;
     }
     return detail;
+}
+
+- (NSString *)_performTableViewCellTap:(UITableViewCell *)cell error:(NSError **)error {
+    UITableView *tableView = [self _enclosingTableViewForView:cell];
+    if (!tableView || !tableView.allowsSelection) {
+        return nil;
+    }
+
+    NSIndexPath *indexPath = [tableView indexPathForCell:cell];
+    if (!indexPath) {
+        return nil;
+    }
+
+    __block NSError *blockError = nil;
+    __block NSString *detail = nil;
+    void (^work)(void) = ^{
+        @try {
+            [tableView selectRowAtIndexPath:indexPath animated:NO scrollPosition:UITableViewScrollPositionNone];
+            id<UITableViewDelegate> delegate = tableView.delegate;
+            if ([delegate respondsToSelector:@selector(tableView:didSelectRowAtIndexPath:)]) {
+                [delegate tableView:tableView didSelectRowAtIndexPath:indexPath];
+            }
+            detail = [NSString stringWithFormat:@"Selected %@ at section %ld row %ld.",
+                      NSStringFromClass(cell.class),
+                      (long)indexPath.section,
+                      (long)indexPath.row];
+        } @catch (NSException *exception) {
+            NSString *message = [NSString stringWithFormat:LKS_Localized(@"%@ raised an exception while selecting a table view cell."), NSStringFromClass(cell.class)];
+            blockError = LookinErrorMake(message, exception.reason ?: @"");
+        }
+    };
+
+    if ([NSThread isMainThread]) {
+        work();
+    } else {
+        dispatch_sync(dispatch_get_main_queue(), work);
+    }
+
+    if (error) {
+        *error = blockError;
+    }
+    return detail;
+}
+
+- (NSString *)_performCollectionViewCellTap:(UICollectionViewCell *)cell error:(NSError **)error {
+    UICollectionView *collectionView = [self _enclosingCollectionViewForView:cell];
+    if (!collectionView || !collectionView.allowsSelection) {
+        return nil;
+    }
+
+    NSIndexPath *indexPath = [collectionView indexPathForCell:cell];
+    if (!indexPath) {
+        return nil;
+    }
+
+    __block NSError *blockError = nil;
+    __block NSString *detail = nil;
+    void (^work)(void) = ^{
+        @try {
+            [collectionView selectItemAtIndexPath:indexPath animated:NO scrollPosition:UICollectionViewScrollPositionNone];
+            id<UICollectionViewDelegate> delegate = collectionView.delegate;
+            if ([delegate respondsToSelector:@selector(collectionView:didSelectItemAtIndexPath:)]) {
+                [delegate collectionView:collectionView didSelectItemAtIndexPath:indexPath];
+            }
+            detail = [NSString stringWithFormat:@"Selected %@ at section %ld item %ld.",
+                      NSStringFromClass(cell.class),
+                      (long)indexPath.section,
+                      (long)indexPath.item];
+        } @catch (NSException *exception) {
+            NSString *message = [NSString stringWithFormat:LKS_Localized(@"%@ raised an exception while selecting a collection view cell."), NSStringFromClass(cell.class)];
+            blockError = LookinErrorMake(message, exception.reason ?: @"");
+        }
+    };
+
+    if ([NSThread isMainThread]) {
+        work();
+    } else {
+        dispatch_sync(dispatch_get_main_queue(), work);
+    }
+
+    if (error) {
+        *error = blockError;
+    }
+    return detail;
+}
+
+- (UITableView *)_enclosingTableViewForView:(UIView *)view {
+    UIView *current = view.superview;
+    while (current) {
+        if ([current isKindOfClass:[UITableView class]]) {
+            return (UITableView *)current;
+        }
+        current = current.superview;
+    }
+    return nil;
+}
+
+- (UICollectionView *)_enclosingCollectionViewForView:(UIView *)view {
+    UIView *current = view.superview;
+    while (current) {
+        if ([current isKindOfClass:[UICollectionView class]]) {
+            return (UICollectionView *)current;
+        }
+        current = current.superview;
+    }
+    return nil;
 }
 
 - (NSString *)_performControlTap:(UIControl *)control error:(NSError **)error {
