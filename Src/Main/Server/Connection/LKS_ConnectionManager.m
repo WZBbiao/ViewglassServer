@@ -52,7 +52,7 @@ NSString *const LKS_ConnectionDidEndNotificationName = @"LKS_ConnectionDidEndNot
 
 - (instancetype)init {
     if (self = [super init]) {
-        NSLog(@"LookinServer - Will launch. Framework version: %@", LOOKIN_SERVER_READABLE_VERSION);
+        NSLog(@"%@ - Will launch. Framework version: %@", VIEWGLASS_SERVER_READABLE_NAME, LOOKIN_SERVER_READABLE_VERSION);
 
         _peerChannels_ = [NSMutableArray array];
 
@@ -93,10 +93,10 @@ NSString *const LKS_ConnectionDidEndNotificationName = @"LKS_ConnectionDidEndNot
 
 - (void)searchPortToListenIfNoConnection {
     if (self.listeningChannel_) {
-        NSLog(@"LookinServer - Abort to search ports. Already listening on a port.");
+        NSLog(@"%@ - Abort to search ports. Already listening on a port.", VIEWGLASS_SERVER_READABLE_NAME);
         return;
     }
-    NSLog(@"LookinServer - Searching port to listen...");
+    NSLog(@"%@ - Searching port to listen...", VIEWGLASS_SERVER_READABLE_NAME);
 
     if ([self isiOSAppOnMac]) {
         [self _tryToListenOnPortFrom:LookinSimulatorIPv4PortNumberStart to:LookinSimulatorIPv4PortNumberEnd current:LookinSimulatorIPv4PortNumberStart retryCount:0];
@@ -133,27 +133,27 @@ NSString *const LKS_ConnectionDidEndNotificationName = @"LKS_ConnectionDidEndNot
         if (error) {
             if (currentPort < toPort) {
                 // 尝试下一个端口
-                NSLog(@"LookinServer - 0.0.0.0:%d is unavailable(%@). Will try anothor address ...", currentPort, error);
+                NSLog(@"%@ - 0.0.0.0:%d is unavailable(%@). Will try anothor address ...", VIEWGLASS_SERVER_READABLE_NAME, currentPort, error);
                 [self _tryToListenOnPortFrom:fromPort to:toPort current:(currentPort + 1) retryCount:retryCount];
             } else {
                 // 所有端口都尝试完毕，全部失败
                 // 可能是 Peertalk accept 连接后旧 socket 尚未完全释放导致的竞争，等待一段时间后重试
                 if (retryCount < 3) {
                     NSTimeInterval delay = 0.3 * (retryCount + 1);
-                    NSLog(@"LookinServer - All ports unavailable. Retry %d/3 in %.1fs...", retryCount + 1, delay);
+                    NSLog(@"%@ - All ports unavailable. Retry %d/3 in %.1fs...", VIEWGLASS_SERVER_READABLE_NAME, retryCount + 1, delay);
                     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(delay * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
                         if (!self.listeningChannel_) {
                             [self _tryToListenOnPortFrom:fromPort to:toPort current:fromPort retryCount:retryCount + 1];
                         }
                     });
                 } else {
-                    NSLog(@"LookinServer - Connect failed in the end after %d retries.", retryCount);
+                    NSLog(@"%@ - Connect failed in the end after %d retries.", VIEWGLASS_SERVER_READABLE_NAME, retryCount);
                 }
             }
 
         } else {
             // 成功
-            NSLog(@"LookinServer - Listening on 0.0.0.0:%d (WiFi/USB)", currentPort);
+            NSLog(@"%@ - Listening on 0.0.0.0:%d (WiFi/USB)", VIEWGLASS_SERVER_READABLE_NAME, currentPort);
             // 此时 channel 状态为 listening，独立保存，不计入 peerChannels_
             self.listeningChannel_ = channel;
             [self _publishBonjourServiceOnPort:currentPort];
@@ -189,7 +189,7 @@ NSString *const LKS_ConnectionDidEndNotificationName = @"LKS_ConnectionDidEndNot
     [self.bonjourService_ setTXTRecordData:[NSNetService dataFromTXTRecordDictionary:txt]];
     self.bonjourService_.delegate = self;
     [self.bonjourService_ publish];
-    NSLog(@"LookinServer - Publishing Bonjour _lookin._tcp. on port %d (name: %@)", port, bundleId);
+    NSLog(@"%@ - Publishing Bonjour _lookin._tcp. on port %d (name: %@)", VIEWGLASS_SERVER_READABLE_NAME, port, bundleId);
 }
 
 - (void)_stopBonjourService {
@@ -200,11 +200,11 @@ NSString *const LKS_ConnectionDidEndNotificationName = @"LKS_ConnectionDidEndNot
 }
 
 - (void)netServiceDidPublish:(NSNetService *)sender {
-    NSLog(@"LookinServer - Bonjour published: %@ on port %d", sender.name, (int)sender.port);
+    NSLog(@"%@ - Bonjour published: %@ on port %d", VIEWGLASS_SERVER_READABLE_NAME, sender.name, (int)sender.port);
 }
 
 - (void)netService:(NSNetService *)sender didNotPublish:(NSDictionary<NSString *, NSNumber *> *)errorDict {
-    NSLog(@"LookinServer - Bonjour publish failed: %@", errorDict);
+    NSLog(@"%@ - Bonjour publish failed: %@", VIEWGLASS_SERVER_READABLE_NAME, errorDict);
 }
 
 - (void)respond:(LookinConnectionResponseAttachment *)data requestType:(uint32_t)requestType tag:(uint32_t)tag channel:(Lookin_PTChannel *)channel {
@@ -258,11 +258,11 @@ NSString *const LKS_ConnectionDidEndNotificationName = @"LKS_ConnectionDidEndNot
 
 /// 当 Client 端链接成功时，该方法会被调用，然后 channel 的状态会变成 connected
 - (void)ioFrameChannel:(Lookin_PTChannel*)channel didAcceptConnection:(Lookin_PTChannel*)otherChannel fromAddress:(Lookin_PTAddress*)address {
-    NSLog(@"LookinServer - New client connected. Listening channel:%@ peer:%@", channel.debugTag, otherChannel.debugTag);
+    NSLog(@"%@ - New client connected. Listening channel:%@ peer:%@", VIEWGLASS_SERVER_READABLE_NAME, channel.debugTag, otherChannel.debugTag);
 
     otherChannel.targetPort = address.port;
     [self.peerChannels_ addObject:otherChannel];
-    NSLog(@"LookinServer - Total connected clients: %lu", (unsigned long)self.peerChannels_.count);
+    NSLog(@"%@ - Total connected clients: %lu", VIEWGLASS_SERVER_READABLE_NAME, (unsigned long)self.peerChannels_.count);
 
     // 不在这里主动 nil listeningChannel_，也不在这里重新监听。
     // Peertalk 在 accept 后会内部 cancel 监听 channel，触发 didEndWithError，
@@ -273,7 +273,7 @@ NSString *const LKS_ConnectionDidEndNotificationName = @"LKS_ConnectionDidEndNot
 - (void)ioFrameChannel:(Lookin_PTChannel*)channel didEndWithError:(NSError*)error {
     if (channel == self.listeningChannel_) {
         // 监听 channel 结束（Peertalk 在 accept 一个新连接后会内部 cancel 它）
-        NSLog(@"LookinServer - Listening channel ended: %@", channel.debugTag);
+        NSLog(@"%@ - Listening channel ended: %@", VIEWGLASS_SERVER_READABLE_NAME, channel.debugTag);
         self.listeningChannel_ = nil;
         // 现在老 socket 已释放，可以安全地重新绑定同一端口、继续等待下一个客户端
         [self searchPortToListenIfNoConnection];
@@ -281,13 +281,13 @@ NSString *const LKS_ConnectionDidEndNotificationName = @"LKS_ConnectionDidEndNot
     }
 
     if (![self.peerChannels_ containsObject:channel]) {
-        NSLog(@"LookinServer - Ignore unknown channel end: %@", channel.debugTag);
+        NSLog(@"%@ - Ignore unknown channel end: %@", VIEWGLASS_SERVER_READABLE_NAME, channel.debugTag);
         return;
     }
 
     // 某个 peer（GUI 或 CLI）断开了
     [self.peerChannels_ removeObject:channel];
-    NSLog(@"LookinServer - Client disconnected:%@ error:%@ remaining:%lu",
+    NSLog(@"%@ - Client disconnected:%@ error:%@ remaining:%lu", VIEWGLASS_SERVER_READABLE_NAME,
           channel.debugTag, error, (unsigned long)self.peerChannels_.count);
 
     [[NSNotificationCenter defaultCenter] postNotificationName:LKS_ConnectionDidEndNotificationName object:self];
@@ -299,14 +299,14 @@ NSString *const LKS_ConnectionDidEndNotificationName = @"LKS_ConnectionDidEndNot
 #pragma mark - Handler
 
 - (void)_handleLocalInspect:(NSNotification *)note {
-    UIAlertController  *alertController = [UIAlertController  alertControllerWithTitle:@"Lookin" message:@"Failed to run local inspection. The feature has been removed. Please use the computer version of Lookin or consider SDKs like FLEX for similar functionality."  preferredStyle:UIAlertControllerStyleAlert];
+    UIAlertController  *alertController = [UIAlertController  alertControllerWithTitle:@"ViewglassServer" message:@"Failed to run local inspection. The feature has been removed. Please use the computer version of Lookin or consider SDKs like FLEX for similar functionality."  preferredStyle:UIAlertControllerStyleAlert];
     UIAlertAction *okAction  = [UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil];
     [alertController addAction:okAction];
     UIWindow *keyWindow = [LKS_MultiplatformAdapter keyWindow];
     UIViewController *rootViewController = [keyWindow rootViewController];
     [rootViewController presentViewController:alertController animated:YES completion:nil];
     
-    NSLog(@"LookinServer - Failed to run local inspection. The feature has been removed. Please use the computer version of Lookin or consider SDKs like FLEX for similar functionality.");
+    NSLog(@"%@ - Failed to run local inspection. The feature has been removed. Please use the computer version of Lookin or consider SDKs like FLEX for similar functionality.", VIEWGLASS_SERVER_READABLE_NAME);
 }
 
 - (void)handleGetLookinInfo:(NSNotification *)note {
@@ -316,7 +316,7 @@ NSString *const LKS_ConnectionDidEndNotificationName = @"LKS_ConnectionDidEndNot
     }
     NSMutableDictionary* infoWrapper = userInfo[@"infos"];
     if (![infoWrapper isKindOfClass:[NSMutableDictionary class]]) {
-        NSLog(@"LookinServer - GetLookinInfo failed. Params invalid.");
+        NSLog(@"%@ - GetLookinInfo failed. Params invalid.", VIEWGLASS_SERVER_READABLE_NAME);
         return;
     }
     infoWrapper[@"lookinServerVersion"] = LOOKIN_SERVER_READABLE_VERSION;

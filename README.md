@@ -1,6 +1,6 @@
-# ViewglassServer
+# ViewglassServer 0.1.0
 
-`ViewglassServer` is the iOS runtime server used by [Viewglass](https://github.com/WZBbiao/viewglass).
+`ViewglassServer 0.1.0` is the iOS runtime server used by [Viewglass](https://github.com/WZBbiao/viewglass).
 It is the maintained server-side fork of `LookinServer`, with additional protocol hardening and
 AI-oriented runtime actions.
 
@@ -110,7 +110,7 @@ Then launch your app on a simulator or device. `viewglass apps list` should disc
 ## Compatibility Notes
 
 - The framework and import name remain `LookinServer`
-- This repository is a maintained fork of the original `QMUI/LookinServer`
+- This repository is a maintained fork of the original `QMUI/LookinServer`, published under the independent ViewglassServer 0.1.0 version line
 - The protocol includes additional safety checks to reduce app crashes during semantic actions
 
 ## Warnings
@@ -121,7 +121,7 @@ Then launch your app on a simulator or device. `viewglass apps list` should disc
 
 ## 中文说明
 
-`ViewglassServer` 是 `Viewglass` 使用的 iOS 运行时服务端。它基于 `LookinServer` 继续维护，
+`ViewglassServer 0.1.0` 是 `Viewglass` 使用的 iOS 运行时服务端。它基于 `LookinServer` 继续维护，
 加入了更安全的语义操作能力和统一的高分截图协议。
 
 集成建议：
