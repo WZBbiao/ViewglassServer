@@ -661,17 +661,37 @@
 
     __block NSError *blockError = nil;
     __block NSString *detail = nil;
+    __block NSIndexPath *selectedIndexPath = indexPath;
     void (^work)(void) = ^{
         @try {
-            [tableView selectRowAtIndexPath:indexPath animated:NO scrollPosition:UITableViewScrollPositionNone];
             id<UITableViewDelegate> delegate = tableView.delegate;
+            if ([delegate respondsToSelector:@selector(tableView:shouldHighlightRowAtIndexPath:)]) {
+                if (![delegate tableView:tableView shouldHighlightRowAtIndexPath:selectedIndexPath]) {
+                    detail = [NSString stringWithFormat:@"%@ refused highlight for section %ld row %ld.",
+                              NSStringFromClass(cell.class),
+                              (long)selectedIndexPath.section,
+                              (long)selectedIndexPath.row];
+                    return;
+                }
+            }
+            if ([delegate respondsToSelector:@selector(tableView:didHighlightRowAtIndexPath:)]) {
+                [delegate tableView:tableView didHighlightRowAtIndexPath:selectedIndexPath];
+            }
+            if ([delegate respondsToSelector:@selector(tableView:willSelectRowAtIndexPath:)]) {
+                selectedIndexPath = [delegate tableView:tableView willSelectRowAtIndexPath:selectedIndexPath];
+            }
+            if (!selectedIndexPath) {
+                detail = [NSString stringWithFormat:@"%@ refused selection during willSelect.", NSStringFromClass(cell.class)];
+                return;
+            }
+            [tableView selectRowAtIndexPath:selectedIndexPath animated:NO scrollPosition:UITableViewScrollPositionNone];
             if ([delegate respondsToSelector:@selector(tableView:didSelectRowAtIndexPath:)]) {
-                [delegate tableView:tableView didSelectRowAtIndexPath:indexPath];
+                [delegate tableView:tableView didSelectRowAtIndexPath:selectedIndexPath];
             }
             detail = [NSString stringWithFormat:@"Selected %@ at section %ld row %ld.",
                       NSStringFromClass(cell.class),
-                      (long)indexPath.section,
-                      (long)indexPath.row];
+                      (long)selectedIndexPath.section,
+                      (long)selectedIndexPath.row];
         } @catch (NSException *exception) {
             NSString *message = [NSString stringWithFormat:LKS_Localized(@"%@ raised an exception while selecting a table view cell."), NSStringFromClass(cell.class)];
             blockError = LookinErrorMake(message, exception.reason ?: @"");
@@ -705,8 +725,29 @@
     __block NSString *detail = nil;
     void (^work)(void) = ^{
         @try {
-            [collectionView selectItemAtIndexPath:indexPath animated:NO scrollPosition:UICollectionViewScrollPositionNone];
             id<UICollectionViewDelegate> delegate = collectionView.delegate;
+            if ([delegate respondsToSelector:@selector(collectionView:shouldHighlightItemAtIndexPath:)]) {
+                if (![delegate collectionView:collectionView shouldHighlightItemAtIndexPath:indexPath]) {
+                    detail = [NSString stringWithFormat:@"%@ refused highlight for section %ld item %ld.",
+                              NSStringFromClass(cell.class),
+                              (long)indexPath.section,
+                              (long)indexPath.item];
+                    return;
+                }
+            }
+            if ([delegate respondsToSelector:@selector(collectionView:didHighlightItemAtIndexPath:)]) {
+                [delegate collectionView:collectionView didHighlightItemAtIndexPath:indexPath];
+            }
+            if ([delegate respondsToSelector:@selector(collectionView:shouldSelectItemAtIndexPath:)]) {
+                if (![delegate collectionView:collectionView shouldSelectItemAtIndexPath:indexPath]) {
+                    detail = [NSString stringWithFormat:@"%@ refused selection for section %ld item %ld.",
+                              NSStringFromClass(cell.class),
+                              (long)indexPath.section,
+                              (long)indexPath.item];
+                    return;
+                }
+            }
+            [collectionView selectItemAtIndexPath:indexPath animated:NO scrollPosition:UICollectionViewScrollPositionNone];
             if ([delegate respondsToSelector:@selector(collectionView:didSelectItemAtIndexPath:)]) {
                 [delegate collectionView:collectionView didSelectItemAtIndexPath:indexPath];
             }
