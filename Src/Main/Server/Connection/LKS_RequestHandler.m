@@ -968,12 +968,11 @@
     }
 
     NSString *targetClassName = NSStringFromClass(target.class);
-    NSString *recognizerClassName = NSStringFromClass(recognizer.class);
 
     if ([selectorName hasPrefix:@"_"]) {
         return NO;
     }
-    if ([targetClassName hasPrefix:@"_"] || [recognizerClassName hasPrefix:@"_"]) {
+    if ([targetClassName hasPrefix:@"_"]) {
         return NO;
     }
     if ([target isKindOfClass:[UIWindow class]]) {
@@ -981,6 +980,12 @@
     }
     if ([recognizer.view isKindOfClass:[UIWindow class]]) {
         return NO;
+    }
+    // Some apps attach category-backed action methods directly to the recognizer
+    // instance. Those still represent app-level behavior even though the runtime
+    // class is UIKit, and blocking them causes semantic tap to miss valid targets.
+    if (target == recognizer) {
+        return YES;
     }
     if ([targetClassName hasPrefix:@"UI"] || [targetClassName hasPrefix:@"NS"]) {
         return NO;
