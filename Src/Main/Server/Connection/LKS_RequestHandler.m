@@ -517,6 +517,11 @@
             }
         }
 
+        NSString *alertActionDetail = [self _performAlertActionViewTap:currentView error:error];
+        if (alertActionDetail || (error && *error)) {
+            return alertActionDetail;
+        }
+
         NSString *detail = [self _performTapGestureOnView:currentView error:error];
         if (detail || (error && *error)) {
             return detail;
@@ -528,6 +533,98 @@
     NSString *message = [NSString stringWithFormat:LKS_Localized(@"Didn't find a tappable UIControl or UITapGestureRecognizer for %@."), NSStringFromClass(view.class)];
     if (error) {
         *error = LookinErrorMake(message, @"");
+    }
+    return nil;
+}
+
+- (NSString *)_performAlertActionViewTap:(UIView *)view error:(NSError **)error {
+    if (![self _isAlertActionView:view]) {
+        return nil;
+    }
+
+    UIAlertController *alertController = [self _alertControllerForActionView:view];
+    if (!alertController) {
+        return nil;
+    }
+
+    NSString *actionTitle = [self _alertActionTitleForView:view];
+    __block NSError *blockError = nil;
+    __block NSString *detail = nil;
+    void (^work)(void) = ^{
+        @try {
+            [alertController dismissViewControllerAnimated:YES completion:nil];
+            if (actionTitle.length) {
+                detail = [NSString stringWithFormat:@"Dismissed UIAlertController action \"%@\".", actionTitle];
+            } else {
+                detail = @"Dismissed UIAlertController action.";
+            }
+        } @catch (NSException *exception) {
+            NSString *message = [NSString stringWithFormat:LKS_Localized(@"%@ raised an exception while handling alert action tap."), NSStringFromClass(alertController.class)];
+            blockError = LookinErrorMake(message, exception.reason ?: @"");
+        }
+    };
+
+    if ([NSThread isMainThread]) {
+        work();
+    } else {
+        dispatch_sync(dispatch_get_main_queue(), work);
+    }
+
+    if (error) {
+        *error = blockError;
+    }
+    return detail;
+}
+
+- (BOOL)_isAlertActionView:(UIView *)view {
+    NSString *className = NSStringFromClass(view.class);
+    return [className rangeOfString:@"UIAlertControllerAction"].location != NSNotFound ||
+           [className rangeOfString:@"UIInterfaceAction"].location != NSNotFound ||
+           [className rangeOfString:@"AlertAction"].location != NSNotFound;
+}
+
+- (UIAlertController *)_alertControllerForActionView:(UIView *)view {
+    UIResponder *responder = view;
+    while (responder) {
+        if ([responder isKindOfClass:[UIAlertController class]]) {
+            return (UIAlertController *)responder;
+        }
+        responder = responder.nextResponder;
+    }
+
+    UIViewController *topController = view.window.rootViewController;
+    if (!topController) {
+        for (UIWindow *window in UIApplication.sharedApplication.windows) {
+            if (window.rootViewController) {
+                topController = window.rootViewController;
+                break;
+            }
+        }
+    }
+    while (topController.presentedViewController) {
+        topController = topController.presentedViewController;
+    }
+    return [topController isKindOfClass:[UIAlertController class]] ? (UIAlertController *)topController : nil;
+}
+
+- (NSString *)_alertActionTitleForView:(UIView *)view {
+    NSString *accessibilityLabel = view.accessibilityLabel;
+    if (accessibilityLabel.length) {
+        return accessibilityLabel;
+    }
+
+    if ([view isKindOfClass:[UILabel class]]) {
+        NSString *text = ((UILabel *)view).text;
+        if (text.length) {
+            return text;
+        }
+    }
+
+    for (UIView *subview in view.subviews) {
+        NSString *title = [self _alertActionTitleForView:subview];
+        if (title.length) {
+            return title;
+        }
     }
     return nil;
 }
