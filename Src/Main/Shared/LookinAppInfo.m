@@ -209,11 +209,7 @@ static NSString * const CodingKey_DeviceType = @"8";
 }
 
 + (UIImage *)screenshotImage {
-    UIWindow *window = [LKS_MultiplatformAdapter keyWindow];
-    if (!window) {
-        return nil;
-    }
-    CGSize size = window.bounds.size;
+    CGSize size = [LKS_MultiplatformAdapter mainScreenBounds].size;
     if (size.width <= 0 || size.height <= 0) {
         // *** Terminating app due to uncaught exception 'NSInternalInconsistencyException', reason: 'UIGraphicsBeginImageContext() failed to allocate CGBitampContext: size={0, 0}, scale=3.000000, bitmapInfo=0x2002. Use UIGraphicsImageRenderer to avoid this assert.'
 
@@ -221,7 +217,7 @@ static NSString * const CodingKey_DeviceType = @"8";
         return nil;
     }
     UIGraphicsBeginImageContextWithOptions(size, YES, 0.4);
-    [window drawViewHierarchyInRect:window.bounds afterScreenUpdates:YES];
+    [self drawVisibleWindowsForScreenScreenshotAfterScreenUpdates:YES];
     UIImage *image = UIGraphicsGetImageFromCurrentImageContext();
     UIGraphicsEndImageContext();
     
@@ -229,24 +225,76 @@ static NSString * const CodingKey_DeviceType = @"8";
 }
 
 + (UIImage *)highResolutionScreenshotImage {
-    UIWindow *window = [LKS_MultiplatformAdapter keyWindow];
-    if (!window) {
-        return nil;
-    }
-    CGSize size = window.bounds.size;
+    CGSize size = [LKS_MultiplatformAdapter mainScreenBounds].size;
     if (size.width <= 0 || size.height <= 0) {
         return nil;
     }
 
     UIGraphicsBeginImageContextWithOptions(size, YES, 0);
-    BOOL drewHierarchy = [window drawViewHierarchyInRect:window.bounds afterScreenUpdates:YES];
-    if (!drewHierarchy) {
-        CGContextRef context = UIGraphicsGetCurrentContext();
-        [window.layer renderInContext:context];
-    }
+    [self drawVisibleWindowsForScreenScreenshotAfterScreenUpdates:YES];
     UIImage *image = UIGraphicsGetImageFromCurrentImageContext();
     UIGraphicsEndImageContext();
     return image;
+}
+
++ (void)drawVisibleWindowsForScreenScreenshotAfterScreenUpdates:(BOOL)afterScreenUpdates {
+    NSArray<UIWindow *> *windows = [self visibleWindowsForScreenScreenshot];
+    CGRect screenBounds = [LKS_MultiplatformAdapter mainScreenBounds];
+    CGContextRef context = UIGraphicsGetCurrentContext();
+
+    for (UIWindow *window in windows) {
+        CGRect drawRect = [window convertRect:window.bounds toWindow:nil];
+        drawRect.origin.x -= screenBounds.origin.x;
+        drawRect.origin.y -= screenBounds.origin.y;
+        if (CGRectIsEmpty(drawRect) || drawRect.size.width <= 0 || drawRect.size.height <= 0) {
+            continue;
+        }
+
+        BOOL drewHierarchy = [window drawViewHierarchyInRect:drawRect afterScreenUpdates:afterScreenUpdates];
+        if (!drewHierarchy && context) {
+            CGContextSaveGState(context);
+            CGContextTranslateCTM(context, drawRect.origin.x, drawRect.origin.y);
+            [window.layer renderInContext:context];
+            CGContextRestoreGState(context);
+        }
+    }
+}
+
++ (NSArray<UIWindow *> *)visibleWindowsForScreenScreenshot {
+    NSMutableArray<UIWindow *> *windows = [NSMutableArray array];
+    CGRect screenBounds = [LKS_MultiplatformAdapter mainScreenBounds];
+
+    for (UIWindow *window in [LKS_MultiplatformAdapter allWindows]) {
+        if (!window || window.hidden || window.alpha <= 0.01) {
+            continue;
+        }
+        if (window.bounds.size.width <= 0 || window.bounds.size.height <= 0) {
+            continue;
+        }
+        CGRect screenRect = [window convertRect:window.bounds toWindow:nil];
+        if (!CGRectIntersectsRect(screenBounds, screenRect)) {
+            continue;
+        }
+        [windows addObject:window];
+    }
+
+    [windows sortUsingComparator:^NSComparisonResult(UIWindow *lhs, UIWindow *rhs) {
+        if (lhs.windowLevel < rhs.windowLevel) {
+            return NSOrderedAscending;
+        }
+        if (lhs.windowLevel > rhs.windowLevel) {
+            return NSOrderedDescending;
+        }
+        return NSOrderedSame;
+    }];
+
+    if (windows.count == 0) {
+        UIWindow *keyWindow = [LKS_MultiplatformAdapter keyWindow];
+        if (keyWindow) {
+            [windows addObject:keyWindow];
+        }
+    }
+    return windows.copy;
 }
 
 + (BOOL)isSimulator {
