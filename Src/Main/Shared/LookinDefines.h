@@ -95,6 +95,9 @@ enum {
 
     /// 带动画滚动 UIScrollView 到指定 contentOffset，服务端在动画结束后再响应 TCP
     LookinRequestTypeSemanticScrollAnimated = 220,
+
+    /// 按屏幕坐标 hit-test 后，对命中的 UIView 执行语义点击
+    LookinRequestTypeCoordinateSemanticTap = 221,
     
     /// 从 LookinServer 1.2.7 & Lookin 1.0.7 开始，该属性被废弃、不再使用
     LookinPush_BringForwardScreenshotTask = 303,

@@ -62,6 +62,7 @@
                               @(LookinRequestTypeSemanticDismiss),
                               @(LookinRequestTypeSemanticTextInput),
                               @(LookinRequestTypeSemanticScrollAnimated),
+                              @(LookinRequestTypeCoordinateSemanticTap),
                               @(LookinPush_CanceHierarchyDetails),
                               nil];
         
@@ -320,6 +321,48 @@
             return;
         }
         [self _submitResponseWithData:@{@"detail": detail ?: @"Triggered semantic tap"} requestType:requestType tag:tag channel:channel];
+    } else if (requestType == LookinRequestTypeCoordinateSemanticTap) {
+        if (![object isKindOfClass:[NSDictionary class]]) {
+            [self _submitResponseWithError:LookinErr_Inner requestType:requestType tag:tag channel:channel];
+            return;
+        }
+        NSDictionary<NSString *, NSNumber *> *params = object;
+        NSNumber *xNumber = params[@"x"];
+        NSNumber *yNumber = params[@"y"];
+        if (![xNumber isKindOfClass:[NSNumber class]] || ![yNumber isKindOfClass:[NSNumber class]]) {
+            NSString *message = LKS_Localized(@"Coordinate semantic tap requires numeric x and y.");
+            [self _submitResponseWithError:LookinErrorMake(message, @"") requestType:requestType tag:tag channel:channel];
+            return;
+        }
+
+        CGPoint screenPoint = CGPointMake(xNumber.doubleValue, yNumber.doubleValue);
+        UIWindow *preferredWindow = [self _windowForSourceOid:params[@"sourceOid"]];
+        UIView *hitView = [self _hitViewAtScreenPoint:screenPoint preferredWindow:preferredWindow];
+        if (!hitView) {
+            NSString *message = [NSString stringWithFormat:LKS_Localized(@"No hittable UIView at screen point {%g,%g}."), screenPoint.x, screenPoint.y];
+            [self _submitResponseWithError:LookinErrorMake(message, @"") requestType:requestType tag:tag channel:channel];
+            return;
+        }
+
+        NSError *error = nil;
+        NSString *detail = [self _performSemanticTapOnView:hitView error:&error];
+        if (error) {
+            [self _submitResponseWithError:error requestType:requestType tag:tag channel:channel];
+            return;
+        }
+
+        unsigned long hitOid = [hitView lks_registerOid];
+        NSString *hitClass = NSStringFromClass(hitView.class);
+        NSString *tapDetail = detail ?: @"Triggered coordinate semantic tap";
+        NSDictionary *response = @{
+            @"detail": tapDetail,
+            @"strategy": @"coordinateSemantic",
+            @"x": @(screenPoint.x),
+            @"y": @(screenPoint.y),
+            @"hitOid": @(hitOid),
+            @"hitClass": hitClass ?: @"UIView"
+        };
+        [self _submitResponseWithData:response requestType:requestType tag:tag channel:channel];
     } else if (requestType == LookinRequestTypeSemanticLongPress) {
         if (![object isKindOfClass:[NSDictionary class]]) {
             [self _submitResponseWithError:LookinErr_Inner requestType:requestType tag:tag channel:channel];
@@ -491,6 +534,72 @@
         *error = LookinErrorMake(LKS_Localized(@"Failed to encode the node screenshot as PNG."), @"");
     }
     return data;
+}
+
+- (UIWindow *)_windowForSourceOid:(NSNumber *)sourceOidNumber {
+    if (![sourceOidNumber isKindOfClass:[NSNumber class]]) {
+        return nil;
+    }
+
+    NSObject *sourceObj = [NSObject lks_objectWithOid:sourceOidNumber.unsignedLongValue];
+    if ([sourceObj isKindOfClass:[UIView class]]) {
+        return ((UIView *)sourceObj).window;
+    }
+    return nil;
+}
+
+- (NSArray<UIWindow *> *)_candidateWindowsWithPreferredWindow:(UIWindow *)preferredWindow {
+    NSMutableOrderedSet<UIWindow *> *ordered = [NSMutableOrderedSet orderedSet];
+    if (preferredWindow) {
+        [ordered addObject:preferredWindow];
+    }
+
+    NSMutableArray<UIWindow *> *windows = [NSMutableArray array];
+    if (@available(iOS 13.0, tvOS 13.0, *)) {
+        for (UIScene *scene in UIApplication.sharedApplication.connectedScenes) {
+            if (![scene isKindOfClass:[UIWindowScene class]]) {
+                continue;
+            }
+            UIWindowScene *windowScene = (UIWindowScene *)scene;
+            [windows addObjectsFromArray:windowScene.windows];
+        }
+    } else {
+        [windows addObjectsFromArray:UIApplication.sharedApplication.windows];
+    }
+
+    NSArray<UIWindow *> *sortedWindows = [windows sortedArrayUsingComparator:^NSComparisonResult(UIWindow *lhs, UIWindow *rhs) {
+        if (lhs.windowLevel > rhs.windowLevel) {
+            return NSOrderedAscending;
+        }
+        if (lhs.windowLevel < rhs.windowLevel) {
+            return NSOrderedDescending;
+        }
+        return NSOrderedSame;
+    }];
+
+    for (UIWindow *window in sortedWindows) {
+        [ordered addObject:window];
+    }
+    return ordered.array;
+}
+
+- (UIView *)_hitViewAtScreenPoint:(CGPoint)screenPoint preferredWindow:(UIWindow *)preferredWindow {
+    for (UIWindow *window in [self _candidateWindowsWithPreferredWindow:preferredWindow]) {
+        if (window.hidden || window.alpha <= 0.01 || !window.userInteractionEnabled) {
+            continue;
+        }
+
+        CGPoint localPoint = [window convertPoint:screenPoint fromWindow:nil];
+        if (!CGRectContainsPoint(window.bounds, localPoint)) {
+            continue;
+        }
+
+        UIView *hitView = [window hitTest:localPoint withEvent:nil];
+        if (hitView) {
+            return hitView;
+        }
+    }
+    return nil;
 }
 
 - (NSString *)_performSemanticTapOnView:(UIView *)view error:(NSError **)error {
