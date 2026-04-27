@@ -261,7 +261,7 @@ static NSString * const CodingKey_DeviceType = @"8";
 }
 
 + (NSArray<UIWindow *> *)visibleWindowsForScreenScreenshot {
-    NSMutableArray<UIWindow *> *windows = [NSMutableArray array];
+    NSMutableArray<UIWindow *> *candidates = [NSMutableArray array];
     CGRect screenBounds = [LKS_MultiplatformAdapter mainScreenBounds];
 
     for (UIWindow *window in [LKS_MultiplatformAdapter allWindows]) {
@@ -273,6 +273,22 @@ static NSString * const CodingKey_DeviceType = @"8";
         }
         CGRect screenRect = [window convertRect:window.bounds toWindow:nil];
         if (!CGRectIntersectsRect(screenBounds, screenRect)) {
+            continue;
+        }
+        [candidates addObject:window];
+    }
+
+    BOOL hasRenderableAppWindow = NO;
+    for (UIWindow *window in candidates) {
+        if (window.rootViewController || window.subviews.count > 0) {
+            hasRenderableAppWindow = YES;
+            break;
+        }
+    }
+
+    NSMutableArray<UIWindow *> *windows = [NSMutableArray arrayWithCapacity:candidates.count];
+    for (UIWindow *window in candidates) {
+        if (hasRenderableAppWindow && [self windowLooksLikeEmptyFullscreenOverlay:window screenBounds:screenBounds]) {
             continue;
         }
         [windows addObject:window];
@@ -295,6 +311,23 @@ static NSString * const CodingKey_DeviceType = @"8";
         }
     }
     return windows.copy;
+}
+
++ (BOOL)windowLooksLikeEmptyFullscreenOverlay:(UIWindow *)window screenBounds:(CGRect)screenBounds {
+    if (window.rootViewController || window.subviews.count > 0) {
+        return NO;
+    }
+    CGRect screenRect = [window convertRect:window.bounds toWindow:nil];
+    CGRect intersection = CGRectIntersection(screenBounds, screenRect);
+    if (CGRectIsNull(intersection) || CGRectIsEmpty(intersection)) {
+        return NO;
+    }
+    CGFloat screenArea = screenBounds.size.width * screenBounds.size.height;
+    if (screenArea <= 0) {
+        return NO;
+    }
+    CGFloat coverage = (intersection.size.width * intersection.size.height) / screenArea;
+    return coverage > 0.9 && window.windowLevel >= UIWindowLevelNormal;
 }
 
 + (BOOL)isSimulator {

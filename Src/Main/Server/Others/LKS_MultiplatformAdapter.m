@@ -55,36 +55,57 @@
 #endif
 
 + (UIWindow *)keyWindow {
-#if TARGET_OS_VISION
-    return [self getFirstActiveWindowScene].keyWindow;
-#else
+    if (@available(iOS 13.0, tvOS 13.0, *)) {
+        UIWindow *candidate = nil;
+        for (UIScene *scene in UIApplication.sharedApplication.connectedScenes) {
+            if (![scene isKindOfClass:UIWindowScene.class]) {
+                continue;
+            }
+            UIWindowScene *windowScene = (UIWindowScene *)scene;
+            if (windowScene.activationState != UISceneActivationStateForegroundActive &&
+                windowScene.activationState != UISceneActivationStateForegroundInactive) {
+                continue;
+            }
+            if (windowScene.keyWindow) {
+                return windowScene.keyWindow;
+            }
+            if (!candidate) {
+                candidate = windowScene.windows.firstObject;
+            }
+        }
+        if (candidate) {
+            return candidate;
+        }
+    }
     return [UIApplication sharedApplication].keyWindow;
-#endif
 }
 
 + (NSArray<UIWindow *> *)allWindows {
-#if TARGET_OS_VISION
     NSMutableArray<UIWindow *> *windows = [NSMutableArray new];
-    for (UIScene *scene in
-         UIApplication.sharedApplication.connectedScenes) {
-        if (![scene isKindOfClass:UIWindowScene.class]) {
-            continue;
-        }
-        UIWindowScene *windowScene = (UIWindowScene *)scene;
-        [windows addObjectsFromArray:windowScene.windows];
-        
-        // 以UIModalPresentationFormSheet形式展示的页面由系统私有window承载，不出现在scene.windows，不过可以从scene.keyWindow中获取
-        if (![windows containsObject:windowScene.keyWindow]) {
-            if (![NSStringFromClass(windowScene.keyWindow.class) containsString:@"HUD"]) {
-                [windows addObject:windowScene.keyWindow];
+    if (@available(iOS 13.0, tvOS 13.0, *)) {
+        for (UIScene *scene in UIApplication.sharedApplication.connectedScenes) {
+            if (![scene isKindOfClass:UIWindowScene.class]) {
+                continue;
             }
+            UIWindowScene *windowScene = (UIWindowScene *)scene;
+            if (windowScene.activationState != UISceneActivationStateForegroundActive &&
+                windowScene.activationState != UISceneActivationStateForegroundInactive) {
+                continue;
+            }
+            [windows addObjectsFromArray:windowScene.windows];
+
+            // 以 UIModalPresentationFormSheet 形式展示的页面由系统私有 window 承载，不总在 scene.windows 中。
+            UIWindow *keyWindow = windowScene.keyWindow;
+            if (keyWindow && ![windows containsObject:keyWindow] && ![NSStringFromClass(keyWindow.class) containsString:@"HUD"]) {
+                [windows addObject:keyWindow];
+            }
+        }
+        if (windows.count) {
+            return [windows copy];
         }
     }
 
-    return [windows copy];
-#else
     return [[UIApplication sharedApplication].windows copy];
-#endif
 }
 
 @end

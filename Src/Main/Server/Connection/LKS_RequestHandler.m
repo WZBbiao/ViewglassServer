@@ -603,24 +603,12 @@
 }
 
 - (NSString *)_performSemanticTapOnView:(UIView *)view error:(NSError **)error {
+    [self _makeWindowKeyForActionView:view];
+
     UIView *currentView = view;
     while (currentView) {
         if ([currentView isKindOfClass:[UIControl class]]) {
             NSString *detail = [self _performControlTap:(UIControl *)currentView error:error];
-            if (detail || (error && *error)) {
-                return detail;
-            }
-        }
-
-        if ([currentView isKindOfClass:[UITableViewCell class]]) {
-            NSString *detail = [self _performTableViewCellTap:(UITableViewCell *)currentView error:error];
-            if (detail || (error && *error)) {
-                return detail;
-            }
-        }
-
-        if ([currentView isKindOfClass:[UICollectionViewCell class]]) {
-            NSString *detail = [self _performCollectionViewCellTap:(UICollectionViewCell *)currentView error:error];
             if (detail || (error && *error)) {
                 return detail;
             }
@@ -636,6 +624,25 @@
             return detail;
         }
 
+        NSString *accessibilityDetail = [self _performAccessibilityActivateOnView:currentView error:error];
+        if (accessibilityDetail || (error && *error)) {
+            return accessibilityDetail;
+        }
+
+        if ([currentView isKindOfClass:[UITableViewCell class]]) {
+            NSString *cellDetail = [self _performTableViewCellTap:(UITableViewCell *)currentView error:error];
+            if (cellDetail || (error && *error)) {
+                return cellDetail;
+            }
+        }
+
+        if ([currentView isKindOfClass:[UICollectionViewCell class]]) {
+            NSString *cellDetail = [self _performCollectionViewCellTap:(UICollectionViewCell *)currentView error:error];
+            if (cellDetail || (error && *error)) {
+                return cellDetail;
+            }
+        }
+
         currentView = currentView.superview;
     }
 
@@ -644,6 +651,22 @@
         *error = LookinErrorMake(message, @"");
     }
     return nil;
+}
+
+- (void)_makeWindowKeyForActionView:(UIView *)view {
+    UIWindow *targetWindow = view.window;
+    if (!targetWindow || targetWindow.isKeyWindow || targetWindow.hidden) {
+        return;
+    }
+
+    void (^work)(void) = ^{
+        [targetWindow makeKeyWindow];
+    };
+    if ([NSThread isMainThread]) {
+        work();
+    } else {
+        dispatch_sync(dispatch_get_main_queue(), work);
+    }
 }
 
 - (NSString *)_performAlertActionViewTap:(UIView *)view error:(NSError **)error {
@@ -1016,6 +1039,42 @@
         }
         return nil;
     }
+}
+
+- (NSString *)_performAccessibilityActivateOnView:(UIView *)view error:(NSError **)error {
+    BOOL mayHaveAccessibilityAction = view.isAccessibilityElement ||
+        view.accessibilityCustomActions.count > 0 ||
+        (view.accessibilityTraits & UIAccessibilityTraitButton) != 0 ||
+        [view isKindOfClass:[UITableViewCell class]] ||
+        [view isKindOfClass:[UICollectionViewCell class]];
+    if (!mayHaveAccessibilityAction || ![view respondsToSelector:@selector(accessibilityActivate)]) {
+        return nil;
+    }
+
+    __block NSError *blockError = nil;
+    __block BOOL activated = NO;
+    void (^work)(void) = ^{
+        @try {
+            activated = [view accessibilityActivate];
+        } @catch (NSException *exception) {
+            NSString *message = [NSString stringWithFormat:LKS_Localized(@"%@ raised an exception while handling accessibilityActivate."), NSStringFromClass(view.class)];
+            blockError = LookinErrorMake(message, exception.reason ?: @"");
+        }
+    };
+
+    if ([NSThread isMainThread]) {
+        work();
+    } else {
+        dispatch_sync(dispatch_get_main_queue(), work);
+    }
+
+    if (error) {
+        *error = blockError;
+    }
+    if (activated) {
+        return [NSString stringWithFormat:@"Activated accessibility action on %@.", NSStringFromClass(view.class)];
+    }
+    return nil;
 }
 
 - (NSString *)_performTapGestureOnView:(UIView *)view error:(NSError **)error {
