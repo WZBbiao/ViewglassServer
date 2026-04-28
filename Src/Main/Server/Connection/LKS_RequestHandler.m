@@ -30,6 +30,43 @@
 #import "LKS_GestureTargetActionsSearcher.h"
 #import "LookinWeakContainer.h"
 #import "LookinTuple.h"
+#if __has_include(<WebKit/WebKit.h>)
+#import <WebKit/WebKit.h>
+#endif
+
+@interface LKS_CoordinateTapGestureRecognizer : UITapGestureRecognizer
+
+@property(nonatomic, weak) UIView *lookin_originalView;
+@property(nonatomic, assign) CGPoint lookin_screenPoint;
+
+@end
+
+@implementation LKS_CoordinateTapGestureRecognizer
+
+- (UIView *)view {
+    return self.lookin_originalView;
+}
+
+- (UIGestureRecognizerState)state {
+    return UIGestureRecognizerStateEnded;
+}
+
+- (CGPoint)locationInView:(UIView *)view {
+    if (!view) {
+        return self.lookin_screenPoint;
+    }
+    return [view convertPoint:self.lookin_screenPoint fromView:nil];
+}
+
+- (NSUInteger)numberOfTouches {
+    return 1;
+}
+
+- (CGPoint)locationOfTouch:(NSUInteger)touchIndex inView:(UIView *)view {
+    return [self locationInView:view];
+}
+
+@end
 
 @interface LKS_RequestHandler ()
 
@@ -345,7 +382,7 @@
         }
 
         NSError *error = nil;
-        NSString *detail = [self _performSemanticTapOnView:hitView error:&error];
+        NSString *detail = [self _performSemanticTapOnView:hitView screenPoint:[NSValue valueWithCGPoint:screenPoint] error:&error];
         if (error) {
             [self _submitResponseWithError:error requestType:requestType tag:tag channel:channel];
             return;
@@ -603,6 +640,12 @@
 }
 
 - (NSString *)_performSemanticTapOnView:(UIView *)view error:(NSError **)error {
+    CGPoint localCenter = CGPointMake(CGRectGetMidX(view.bounds), CGRectGetMidY(view.bounds));
+    CGPoint screenPoint = [view convertPoint:localCenter toView:nil];
+    return [self _performSemanticTapOnView:view screenPoint:[NSValue valueWithCGPoint:screenPoint] error:error];
+}
+
+- (NSString *)_performSemanticTapOnView:(UIView *)view screenPoint:(NSValue *)screenPointValue error:(NSError **)error {
     [self _makeWindowKeyForActionView:view];
 
     UIView *currentView = view;
@@ -619,7 +662,7 @@
             return alertActionDetail;
         }
 
-        NSString *detail = [self _performTapGestureOnView:currentView error:error];
+        NSString *detail = [self _performTapGestureOnView:currentView screenPoint:screenPointValue error:error];
         if (detail || (error && *error)) {
             return detail;
         }
@@ -793,9 +836,15 @@
     if ([targetObj isKindOfClass:[UITextView class]]) {
         return [self _performSemanticTextInputOnTextView:(UITextView *)targetObj text:text error:error];
     }
+    if ([targetObj isKindOfClass:[UIView class]]) {
+        NSString *webDetail = [self _performSemanticTextInputOnWebViewContainingView:(UIView *)targetObj text:text error:error];
+        if (webDetail || (error && *error)) {
+            return webDetail;
+        }
+    }
 
     if (error) {
-        NSString *message = [NSString stringWithFormat:LKS_Localized(@"Semantic text input only supports UITextField/UITextView targets, got %@."), NSStringFromClass(targetObj.class)];
+        NSString *message = [NSString stringWithFormat:LKS_Localized(@"Semantic text input only supports UITextField/UITextView/WKWebView editor targets, got %@."), NSStringFromClass(targetObj.class)];
         *error = LookinErrorMake(message, @"");
     }
     return nil;
@@ -875,6 +924,115 @@
         *error = blockError;
     }
     return detail;
+}
+
+- (NSString *)_performSemanticTextInputOnWebViewContainingView:(UIView *)view text:(NSString *)text error:(NSError **)error {
+#if __has_include(<WebKit/WebKit.h>)
+    WKWebView *webView = (WKWebView *)[self _nearestWebViewForView:view];
+    if (!webView) {
+        return nil;
+    }
+
+    NSString *textLiteral = [self _JSONStringLiteralForString:text ?: @""];
+    NSString *script = [NSString stringWithFormat:
+        @"(function(){"
+         "const text=%@;"
+         "function visible(e){const r=e.getBoundingClientRect();return r.width>0&&r.height>0;}"
+         "function editable(e){if(!e)return false;const t=(e.tagName||'').toLowerCase();return e.isContentEditable||t==='textarea'||t==='input'||e.getAttribute('role')==='textbox';}"
+         "const all=[];"
+         "if(editable(document.activeElement)) all.push(document.activeElement);"
+         "document.querySelectorAll('textarea,input,[contenteditable],.ql-editor,.ProseMirror,[role=\"textbox\"]').forEach(e=>{if(!all.includes(e))all.push(e);});"
+         "const el=all.find(e=>editable(e)&&visible(e))||all.find(editable);"
+         "if(!el)return {ok:false,reason:'no editable element'};"
+         "function fireInput(e){"
+           "let inputEvent=null;"
+           "try{inputEvent=new InputEvent('input',{bubbles:true,inputType:'insertText',data:text});}catch(_){inputEvent=new Event('input',{bubbles:true});}"
+           "e.dispatchEvent(inputEvent);"
+           "e.dispatchEvent(new Event('change',{bubbles:true}));"
+         "}"
+         "el.focus();"
+         "const tag=(el.tagName||'').toLowerCase();"
+         "if(tag==='textarea'||tag==='input'){"
+           "const proto=tag==='textarea'?HTMLTextAreaElement.prototype:HTMLInputElement.prototype;"
+           "const desc=Object.getOwnPropertyDescriptor(proto,'value');"
+           "if(desc&&desc.set)desc.set.call(el,text);else el.value=text;"
+           "fireInput(el);"
+           "return {ok:true,kind:tag,length:(el.value||'').length};"
+         "}"
+         "const selection=window.getSelection();"
+         "const range=document.createRange();"
+         "range.selectNodeContents(el);"
+         "selection.removeAllRanges();"
+         "selection.addRange(range);"
+         "let inserted=false;"
+         "try{inserted=document.execCommand('insertText',false,text);}catch(e){}"
+         "if(!inserted){el.textContent=text;}"
+         "fireInput(el);"
+         "return {ok:true,kind:'contenteditable',length:(el.innerText||el.textContent||'').length};"
+       "})()", textLiteral];
+
+    __block NSError *blockError = nil;
+    __block NSString *detail = nil;
+    __block BOOL completed = NO;
+
+    void (^evaluate)(void) = ^{
+        [webView evaluateJavaScript:script completionHandler:^(id result, NSError *jsError) {
+            if (jsError) {
+                blockError = jsError;
+            } else if ([result isKindOfClass:[NSDictionary class]] && ![result[@"ok"] boolValue]) {
+                NSString *reason = [result[@"reason"] isKindOfClass:[NSString class]] ? result[@"reason"] : @"unknown JavaScript input failure";
+                blockError = LookinErrorMake(LKS_Localized(@"WKWebView editor input failed."), reason);
+            } else {
+                detail = [NSString stringWithFormat:@"Inserted %lu characters into WKWebView editor.", (unsigned long)text.length];
+            }
+            completed = YES;
+        }];
+    };
+
+    if ([NSThread isMainThread]) {
+        evaluate();
+        NSDate *deadline = [NSDate dateWithTimeIntervalSinceNow:5];
+        while (!completed && [deadline timeIntervalSinceNow] > 0) {
+            [[NSRunLoop currentRunLoop] runMode:NSDefaultRunLoopMode beforeDate:[NSDate dateWithTimeIntervalSinceNow:0.02]];
+        }
+    } else {
+        dispatch_async(dispatch_get_main_queue(), evaluate);
+        NSDate *deadline = [NSDate dateWithTimeIntervalSinceNow:5];
+        while (!completed && [deadline timeIntervalSinceNow] > 0) {
+            [NSThread sleepForTimeInterval:0.02];
+        }
+    }
+
+    if (!completed) {
+        blockError = LookinErrorMake(LKS_Localized(@"WKWebView editor input timed out."), @"");
+    }
+    if (error) {
+        *error = blockError;
+    }
+    return blockError ? nil : detail;
+#else
+    return nil;
+#endif
+}
+
+- (UIView *)_nearestWebViewForView:(UIView *)view {
+    UIView *current = view;
+    while (current) {
+        if ([NSStringFromClass(current.class) containsString:@"WKWebView"]) {
+            return current;
+        }
+        current = current.superview;
+    }
+    return nil;
+}
+
+- (NSString *)_JSONStringLiteralForString:(NSString *)string {
+    NSData *data = [NSJSONSerialization dataWithJSONObject:@[string ?: @""] options:0 error:nil];
+    NSString *arrayLiteral = [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding];
+    if (arrayLiteral.length >= 2) {
+        return [arrayLiteral substringWithRange:NSMakeRange(1, arrayLiteral.length - 2)];
+    }
+    return @"\"\"";
 }
 
 - (NSString *)_performTableViewCellTap:(UITableViewCell *)cell error:(NSError **)error {
@@ -1077,12 +1235,12 @@
     return nil;
 }
 
-- (NSString *)_performTapGestureOnView:(UIView *)view error:(NSError **)error {
+- (NSString *)_performTapGestureOnView:(UIView *)view screenPoint:(NSValue *)screenPointValue error:(NSError **)error {
     for (UIGestureRecognizer *recognizer in view.gestureRecognizers) {
         if (![recognizer isKindOfClass:[UITapGestureRecognizer class]] || !recognizer.enabled) {
             continue;
         }
-        NSString *detail = [self _invokeTapGestureRecognizer:(UITapGestureRecognizer *)recognizer error:error];
+        NSString *detail = [self _invokeTapGestureRecognizer:(UITapGestureRecognizer *)recognizer screenPoint:screenPointValue error:error];
         if (detail || (error && *error)) {
             return detail;
         }
@@ -1103,8 +1261,8 @@
     return nil;
 }
 
-- (NSString *)_invokeTapGestureRecognizer:(UITapGestureRecognizer *)recognizer error:(NSError **)error {
-    NSArray<LookinTwoTuple *> *targetActions = [LKS_GestureTargetActionsSearcher getTargetActionsFromRecognizer:recognizer];
+- (NSString *)_invokeTapGestureRecognizer:(UITapGestureRecognizer *)recognizer screenPoint:(NSValue *)screenPointValue error:(NSError **)error {
+    NSArray<LookinTwoTuple *> *targetActions = [self _prioritizedTargetActionsForRecognizer:recognizer];
     for (LookinTwoTuple *tuple in targetActions) {
         LookinWeakContainer *container = [tuple.first isKindOfClass:[LookinWeakContainer class]] ? (LookinWeakContainer *)tuple.first : nil;
         NSObject *target = container.object;
@@ -1133,7 +1291,7 @@
         invocation.target = target;
         invocation.selector = selector;
         if (signature.numberOfArguments == 3) {
-            UIGestureRecognizer *argRecognizer = recognizer;
+            UIGestureRecognizer *argRecognizer = [self _gestureRecognizerArgumentForRecognizer:recognizer screenPoint:screenPointValue];
             [invocation setArgument:&argRecognizer atIndex:2];
         }
 
@@ -1143,12 +1301,40 @@
         }
     }
 
-    NSString *fallbackDetail = [self _invokeGestureRecognizerViaResponderChain:recognizer injectLongPressState:NO error:error];
+    NSString *fallbackDetail = [self _invokeGestureRecognizerViaResponderChain:recognizer screenPoint:screenPointValue injectLongPressState:NO error:error];
     if (fallbackDetail || (error && *error)) {
         return fallbackDetail;
     }
 
     return nil;
+}
+
+- (NSArray<LookinTwoTuple *> *)_prioritizedTargetActionsForRecognizer:(UIGestureRecognizer *)recognizer {
+    NSArray<LookinTwoTuple *> *targetActions = [LKS_GestureTargetActionsSearcher getTargetActionsFromRecognizer:recognizer];
+    NSMutableArray<LookinTwoTuple *> *appActions = [NSMutableArray array];
+    NSMutableArray<LookinTwoTuple *> *recognizerActions = [NSMutableArray array];
+    for (LookinTwoTuple *tuple in targetActions) {
+        LookinWeakContainer *container = [tuple.first isKindOfClass:[LookinWeakContainer class]] ? (LookinWeakContainer *)tuple.first : nil;
+        NSObject *target = container.object;
+        if (target == recognizer) {
+            [recognizerActions addObject:tuple];
+        } else {
+            [appActions addObject:tuple];
+        }
+    }
+    [appActions addObjectsFromArray:recognizerActions];
+    return appActions.copy;
+}
+
+- (UIGestureRecognizer *)_gestureRecognizerArgumentForRecognizer:(UIGestureRecognizer *)recognizer screenPoint:(NSValue *)screenPointValue {
+    if (!screenPointValue || ![recognizer isKindOfClass:[UITapGestureRecognizer class]]) {
+        return recognizer;
+    }
+    LKS_CoordinateTapGestureRecognizer *fakeRecognizer = [LKS_CoordinateTapGestureRecognizer new];
+    fakeRecognizer.lookin_originalView = recognizer.view;
+    fakeRecognizer.lookin_screenPoint = screenPointValue.CGPointValue;
+    fakeRecognizer.enabled = recognizer.enabled;
+    return fakeRecognizer;
 }
 
 - (NSString *)_invokeLongPressGestureRecognizer:(UILongPressGestureRecognizer *)recognizer error:(NSError **)error {
@@ -1187,7 +1373,7 @@
         }
     }
 
-    NSString *fallbackDetail = [self _invokeGestureRecognizerViaResponderChain:recognizer injectLongPressState:YES error:error];
+    NSString *fallbackDetail = [self _invokeGestureRecognizerViaResponderChain:recognizer screenPoint:nil injectLongPressState:YES error:error];
     if (fallbackDetail || (error && *error)) {
         return fallbackDetail;
     }
@@ -1259,7 +1445,7 @@
     return YES;
 }
 
-- (NSString *)_invokeGestureRecognizerViaResponderChain:(UIGestureRecognizer *)recognizer injectLongPressState:(BOOL)injectLongPressState error:(NSError **)error {
+- (NSString *)_invokeGestureRecognizerViaResponderChain:(UIGestureRecognizer *)recognizer screenPoint:(NSValue *)screenPointValue injectLongPressState:(BOOL)injectLongPressState error:(NSError **)error {
     NSString *description = recognizer.description ?: @"";
     NSRange actionRange = [description rangeOfString:@"action="];
     if (actionRange.location == NSNotFound) {
@@ -1290,7 +1476,7 @@
             invocation.target = responder;
             invocation.selector = selector;
             if (signature.numberOfArguments == 3) {
-                UIGestureRecognizer *argRecognizer = recognizer;
+                UIGestureRecognizer *argRecognizer = [self _gestureRecognizerArgumentForRecognizer:recognizer screenPoint:screenPointValue];
                 [invocation setArgument:&argRecognizer atIndex:2];
             }
 

@@ -288,6 +288,9 @@ static NSString * const CodingKey_DeviceType = @"8";
 
     NSMutableArray<UIWindow *> *windows = [NSMutableArray arrayWithCapacity:candidates.count];
     for (UIWindow *window in candidates) {
+        if ([self windowLooksLikeNonVisualSystemOverlay:window screenBounds:screenBounds]) {
+            continue;
+        }
         if (hasRenderableAppWindow && [self windowLooksLikeEmptyFullscreenOverlay:window screenBounds:screenBounds]) {
             continue;
         }
@@ -311,6 +314,35 @@ static NSString * const CodingKey_DeviceType = @"8";
         }
     }
     return windows.copy;
+}
+
++ (BOOL)windowLooksLikeNonVisualSystemOverlay:(UIWindow *)window screenBounds:(CGRect)screenBounds {
+    CGRect screenRect = [window convertRect:window.bounds toWindow:nil];
+    CGRect intersection = CGRectIntersection(screenBounds, screenRect);
+    if (CGRectIsNull(intersection) || CGRectIsEmpty(intersection)) {
+        return NO;
+    }
+    CGFloat screenArea = screenBounds.size.width * screenBounds.size.height;
+    if (screenArea <= 0) {
+        return NO;
+    }
+    CGFloat coverage = (intersection.size.width * intersection.size.height) / screenArea;
+    if (coverage < 0.9) {
+        return NO;
+    }
+
+    NSArray<NSString *> *classNames = @[
+        NSStringFromClass(window.class) ?: @"",
+        NSStringFromClass(window.rootViewController.class) ?: @"",
+        NSStringFromClass(window.rootViewController.view.class) ?: @""
+    ];
+    for (NSString *className in classNames) {
+        if ([className containsString:@"UITrackingElementWindow"] ||
+            [className containsString:@"UITrackingWindow"]) {
+            return YES;
+        }
+    }
+    return NO;
 }
 
 + (BOOL)windowLooksLikeEmptyFullscreenOverlay:(UIWindow *)window screenBounds:(CGRect)screenBounds {
