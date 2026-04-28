@@ -21,6 +21,12 @@
 #import "LKS_CustomAttrSetterManager.h"
 #import "LKS_MultiplatformAdapter.h"
 
+typedef NS_ENUM(NSUInteger, LKSSystemHierarchyNoisePolicy) {
+    LKSSystemHierarchyNoisePolicyNone,
+    LKSSystemHierarchyNoisePolicyElideNode,
+    LKSSystemHierarchyNoisePolicyDropSubtree,
+};
+
 @implementation LKS_HierarchyDisplayItemsMaker
 
 + (NSArray<LookinDisplayItem *> *)itemsWithScreenshots:(BOOL)hasScreenshots attrList:(BOOL)hasAttrList lowImageQuality:(BOOL)lowQuality readCustomInfo:(BOOL)readCustomInfo saveCustomSetter:(BOOL)saveCustomSetter {
@@ -31,13 +37,31 @@
     NSMutableArray *resultArray = [NSMutableArray arrayWithCapacity:windows.count];
     [windows enumerateObjectsUsingBlock:^(__kindof UIWindow * _Nonnull window, NSUInteger idx, BOOL * _Nonnull stop) {
         LookinDisplayItem *item = [self _displayItemWithLayer:window.layer screenshots:hasScreenshots attrList:hasAttrList lowImageQuality:lowQuality readCustomInfo:readCustomInfo saveCustomSetter:saveCustomSetter];
-        item.representedAsKeyWindow = window.isKeyWindow;
         if (item) {
+            item.representedAsKeyWindow = window.isKeyWindow;
             [resultArray addObject:item];
         }
     }];
     
     return [resultArray copy];
+}
+
++ (NSArray<LookinDisplayItem *> *)_displayItemsWithLayer:(CALayer *)layer screenshots:(BOOL)hasScreenshots attrList:(BOOL)hasAttrList lowImageQuality:(BOOL)lowQuality readCustomInfo:(BOOL)readCustomInfo saveCustomSetter:(BOOL)saveCustomSetter {
+    if (!layer) {
+        return @[];
+    }
+
+    switch ([self _systemHierarchyNoisePolicyForLayer:layer]) {
+        case LKSSystemHierarchyNoisePolicyElideNode:
+            return [self _subitemsWithLayer:layer screenshots:hasScreenshots attrList:hasAttrList lowImageQuality:lowQuality readCustomInfo:readCustomInfo saveCustomSetter:saveCustomSetter];
+        case LKSSystemHierarchyNoisePolicyDropSubtree:
+            return @[];
+        case LKSSystemHierarchyNoisePolicyNone: {
+            LookinDisplayItem *item = [self _displayItemWithLayer:layer screenshots:hasScreenshots attrList:hasAttrList lowImageQuality:lowQuality readCustomInfo:readCustomInfo saveCustomSetter:saveCustomSetter];
+            return item ? @[item] : @[];
+        }
+    }
+    return @[];
 }
 
 + (LookinDisplayItem *)_displayItemWithLayer:(CALayer *)layer screenshots:(BOOL)hasScreenshots attrList:(BOOL)hasAttrList lowImageQuality:(BOOL)lowQuality readCustomInfo:(BOOL)readCustomInfo saveCustomSetter:(BOOL)saveCustomSetter {
@@ -109,29 +133,33 @@
         item.backgroundColor = [UIColor lks_colorWithCGColor:layer.backgroundColor];
     }
     
-    if (layer.sublayers.count) {
-        NSArray<CALayer *> *sublayers = [layer.sublayers copy];
-        NSMutableArray<LookinDisplayItem *> *allSubitems = [NSMutableArray arrayWithCapacity:sublayers.count];
-        [sublayers enumerateObjectsUsingBlock:^(__kindof CALayer * _Nonnull sublayer, NSUInteger idx, BOOL * _Nonnull stop) {
-            LookinDisplayItem *sublayer_item = [self _displayItemWithLayer:sublayer screenshots:hasScreenshots attrList:hasAttrList lowImageQuality:lowQuality readCustomInfo:readCustomInfo saveCustomSetter:saveCustomSetter];
-            if (sublayer_item) {
-                [allSubitems addObject:sublayer_item];
-            }
-        }];
-        item.subitems = [allSubitems copy];
+    NSArray<LookinDisplayItem *> *subitems = [self _subitemsWithLayer:layer screenshots:hasScreenshots attrList:hasAttrList lowImageQuality:lowQuality readCustomInfo:readCustomInfo saveCustomSetter:saveCustomSetter];
+    if (subitems.count > 0) {
+        item.subitems = subitems;
     }
+
+    return item;
+}
+
++ (NSArray<LookinDisplayItem *> *)_subitemsWithLayer:(CALayer *)layer screenshots:(BOOL)hasScreenshots attrList:(BOOL)hasAttrList lowImageQuality:(BOOL)lowQuality readCustomInfo:(BOOL)readCustomInfo saveCustomSetter:(BOOL)saveCustomSetter {
+    NSMutableArray<LookinDisplayItem *> *resultSubitems = [NSMutableArray array];
+
+    NSArray<CALayer *> *sublayers = [layer.sublayers copy];
+    [sublayers enumerateObjectsUsingBlock:^(__kindof CALayer * _Nonnull sublayer, NSUInteger idx, BOOL * _Nonnull stop) {
+        NSArray<LookinDisplayItem *> *sublayerItems = [self _displayItemsWithLayer:sublayer screenshots:hasScreenshots attrList:hasAttrList lowImageQuality:lowQuality readCustomInfo:readCustomInfo saveCustomSetter:saveCustomSetter];
+        if (sublayerItems.count > 0) {
+            [resultSubitems addObjectsFromArray:sublayerItems];
+        }
+    }];
+
     if (readCustomInfo) {
         NSArray<LookinDisplayItem *> *customSubitems = [[[LKS_CustomDisplayItemsMaker alloc] initWithLayer:layer saveAttrSetter:saveCustomSetter] make];
         if (customSubitems.count > 0) {
-            if (item.subitems) {
-                item.subitems = [item.subitems arrayByAddingObjectsFromArray:customSubitems];
-            } else {
-                item.subitems = customSubitems;
-            }
-        }        
+            [resultSubitems addObjectsFromArray:customSubitems];
+        }
     }
-    
-    return item;
+
+    return [resultSubitems copy];
 }
 
 + (NSArray<LookinDisplayItem *> *)subitemsOfLayer:(CALayer *)layer {
@@ -140,22 +168,38 @@
     }
     [[LKS_TraceManager sharedInstance] reload];
     
-    NSMutableArray<LookinDisplayItem *> *resultSubitems = [NSMutableArray array];
-
-    NSArray<CALayer *> *sublayers = [layer.sublayers copy];
-    [sublayers enumerateObjectsUsingBlock:^(__kindof CALayer * _Nonnull sublayer, NSUInteger idx, BOOL * _Nonnull stop) {
-        LookinDisplayItem *sublayer_item = [self _displayItemWithLayer:sublayer screenshots:NO attrList:NO lowImageQuality:NO readCustomInfo:YES saveCustomSetter:YES];
-        if (sublayer_item) {
-            [resultSubitems addObject:sublayer_item];
-        }
-    }];
-
-    NSArray<LookinDisplayItem *> *customSubitems = [[[LKS_CustomDisplayItemsMaker alloc] initWithLayer:layer saveAttrSetter:YES] make];
-    if (customSubitems.count > 0) {
-        [resultSubitems addObjectsFromArray:customSubitems];
-    }
-    
+    NSArray<LookinDisplayItem *> *resultSubitems = [self _subitemsWithLayer:layer screenshots:NO attrList:NO lowImageQuality:NO readCustomInfo:YES saveCustomSetter:YES];
     return resultSubitems;
+}
+
++ (LKSSystemHierarchyNoisePolicy)_systemHierarchyNoisePolicyForLayer:(CALayer *)layer {
+    UIView *hostView = layer.lks_hostView;
+    NSString *className = hostView ? NSStringFromClass(hostView.class) : NSStringFromClass(layer.class);
+
+    if ([className isEqualToString:@"_UITouchPassthroughView"] ||
+        [className isEqualToString:@"_UIMultiLayer"] ||
+        [className isEqualToString:@"_UITabBarContainerWrapperView"] ||
+        [className isEqualToString:@"UIKit._UITabBarContainerWrapperView"] ||
+        [className isEqualToString:@"_UITabBarContainerView"] ||
+        [className isEqualToString:@"UIKit._UITabBarContainerView"]) {
+        return LKSSystemHierarchyNoisePolicyElideNode;
+    }
+
+    if ([className isEqualToString:@"_UIFloatingBarContainerView"] ||
+        [className isEqualToString:@"_UIPointerInteractionAssistantEffectContainerView"] ||
+        [className isEqualToString:@"_UIPortalView"]) {
+        return LKSSystemHierarchyNoisePolicyDropSubtree;
+    }
+
+    if ([className containsString:@"FloatingBarHostingView"] &&
+        [className containsString:@"FloatingBarContainer"]) {
+        return LKSSystemHierarchyNoisePolicyDropSubtree;
+    }
+    if ([className containsString:@"ScrollEdgeEffectView"]) {
+        return LKSSystemHierarchyNoisePolicyDropSubtree;
+    }
+
+    return LKSSystemHierarchyNoisePolicyNone;
 }
 
 + (BOOL)validateFrame:(CGRect)frame {
