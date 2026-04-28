@@ -52,8 +52,10 @@ typedef NS_ENUM(NSUInteger, LKSSystemHierarchyNoisePolicy) {
     }
 
     switch ([self _systemHierarchyNoisePolicyForLayer:layer]) {
-        case LKSSystemHierarchyNoisePolicyElideNode:
-            return [self _subitemsWithLayer:layer screenshots:hasScreenshots attrList:hasAttrList lowImageQuality:lowQuality readCustomInfo:readCustomInfo saveCustomSetter:saveCustomSetter];
+        case LKSSystemHierarchyNoisePolicyElideNode: {
+            NSArray<LookinDisplayItem *> *subitems = [self _subitemsWithLayer:layer screenshots:hasScreenshots attrList:hasAttrList lowImageQuality:lowQuality readCustomInfo:readCustomInfo saveCustomSetter:saveCustomSetter];
+            return [self _displayItems:subitems promotedFromElidedLayer:layer];
+        }
         case LKSSystemHierarchyNoisePolicyDropSubtree:
             return @[];
         case LKSSystemHierarchyNoisePolicyNone: {
@@ -160,6 +162,23 @@ typedef NS_ENUM(NSUInteger, LKSSystemHierarchyNoisePolicy) {
     }
 
     return [resultSubitems copy];
+}
+
++ (NSArray<LookinDisplayItem *> *)_displayItems:(NSArray<LookinDisplayItem *> *)items promotedFromElidedLayer:(CALayer *)layer {
+    if (items.count == 0) {
+        return @[];
+    }
+
+    CGFloat offsetX = layer.frame.origin.x - layer.bounds.origin.x;
+    CGFloat offsetY = layer.frame.origin.y - layer.bounds.origin.y;
+    if (offsetX == 0 && offsetY == 0) {
+        return items;
+    }
+
+    [items enumerateObjectsUsingBlock:^(LookinDisplayItem * _Nonnull item, NSUInteger idx, BOOL * _Nonnull stop) {
+        item.frame = CGRectOffset(item.frame, offsetX, offsetY);
+    }];
+    return items;
 }
 
 + (NSArray<LookinDisplayItem *> *)subitemsOfLayer:(CALayer *)layer {
