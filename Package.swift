@@ -43,6 +43,12 @@ let package = Package(
             cxxSettings: [
                 .define("SHOULD_COMPILE_LOOKIN_SERVER", to: "1", .when(configuration: .debug)),
                 .define("SPM_LOOKIN_SERVER_ENABLED", to: "1", .when(configuration: .debug))
+            ],
+            linkerSettings: [
+                .linkedFramework("AVFoundation"),
+                .linkedFramework("CoreImage"),
+                .linkedFramework("CoreMedia"),
+                .linkedFramework("CoreVideo")
             ]
         ),
         .target(

@@ -11,7 +11,7 @@ Pod::Spec.new do |spec|
   spec.visionos.deployment_target = "1.0"
   spec.default_subspecs = 'Core'
   spec.source       = { :git => "https://github.com/WZBbiao/ViewglassServer.git", :tag => "0.1.0"}
-  spec.framework  = "UIKit"
+  spec.frameworks = "UIKit", "AVFoundation", "CoreImage", "CoreMedia", "CoreVideo"
   spec.requires_arc = true
     
   spec.subspec 'Core' do |ss|

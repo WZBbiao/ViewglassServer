@@ -14,6 +14,7 @@
 #import <objc/runtime.h>
 #import "LKS_ConnectionManager.h"
 #import "LookinIvarTrace.h"
+#import "LookinAppInfo.h"
 #import "LookinServerDefines.h"
 #import "UIColor+LookinServer.h"
 #import "LKS_MultiplatformAdapter.h"
@@ -88,6 +89,7 @@
     } else {
         [self renderInContext:context];
     }
+    [LookinAppInfo drawVisibleAVPlayerLayersInLayer:self contextBounds:CGRectMake(0, 0, self.frame.size.width, self.frame.size.height)];
     UIImage *image = UIGraphicsGetImageFromCurrentImageContext();
     UIGraphicsEndImageContext();
     return image;

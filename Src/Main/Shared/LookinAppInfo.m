@@ -12,6 +12,8 @@
 
 #import "LookinAppInfo.h"
 #import "LKS_MultiplatformAdapter.h"
+#import <AVFoundation/AVFoundation.h>
+#import <CoreImage/CoreImage.h>
 
 static NSString * const CodingKey_AppIcon = @"1";
 static NSString * const CodingKey_Screenshot = @"2";
@@ -258,6 +260,305 @@ static NSString * const CodingKey_DeviceType = @"8";
             CGContextRestoreGState(context);
         }
     }
+
+    [self drawVisibleAVPlayerLayersForScreenScreenshotInWindows:windows screenBounds:screenBounds];
+}
+
++ (void)drawVisibleAVPlayerLayersForScreenScreenshotInWindows:(NSArray<UIWindow *> *)windows screenBounds:(CGRect)screenBounds {
+    CGContextRef context = UIGraphicsGetCurrentContext();
+    if (!context) {
+        return;
+    }
+
+    for (UIWindow *window in windows) {
+        [self drawVisibleAVPlayerLayersInLayer:window.layer window:window screenBounds:screenBounds];
+    }
+}
+
++ (void)drawVisibleAVPlayerLayersInLayer:(CALayer *)layer contextBounds:(CGRect)contextBounds {
+    CGContextRef context = UIGraphicsGetCurrentContext();
+    if (!context || !layer || CGRectIsEmpty(contextBounds)) {
+        return;
+    }
+
+    [self drawVisibleAVPlayerLayersInLayer:layer relativeToLayer:layer contextBounds:contextBounds];
+}
+
++ (void)drawVisibleAVPlayerLayersInLayer:(CALayer *)layer relativeToLayer:(CALayer *)targetLayer contextBounds:(CGRect)contextBounds {
+    if (!layer || layer.hidden || layer.opacity <= 0.01 || CGRectIsEmpty(layer.bounds)) {
+        return;
+    }
+
+    if ([layer isKindOfClass:AVPlayerLayer.class]) {
+        AVPlayerLayer *playerLayer = (AVPlayerLayer *)layer;
+        CGRect rectInContext = [playerLayer convertRect:playerLayer.bounds toLayer:targetLayer];
+        CGRect clippedRect = CGRectIntersection(contextBounds, rectInContext);
+        if (!CGRectIsNull(clippedRect) && !CGRectIsEmpty(clippedRect)) {
+            UIImage *frameImage = [self imageForAVPlayerLayer:playerLayer targetSize:clippedRect.size];
+            if (frameImage) {
+                [self drawAVPlayerFrameImage:frameImage inRect:rectInContext videoGravity:playerLayer.videoGravity];
+            }
+        }
+    }
+
+    NSArray<CALayer *> *sublayers = [layer.sublayers copy];
+    for (CALayer *sublayer in sublayers) {
+        [self drawVisibleAVPlayerLayersInLayer:sublayer relativeToLayer:targetLayer contextBounds:contextBounds];
+    }
+}
+
++ (void)drawVisibleAVPlayerLayersInLayer:(CALayer *)layer window:(UIWindow *)window screenBounds:(CGRect)screenBounds {
+    if (!layer || layer.hidden || layer.opacity <= 0.01 || CGRectIsEmpty(layer.bounds)) {
+        return;
+    }
+
+    if ([layer isKindOfClass:AVPlayerLayer.class]) {
+        AVPlayerLayer *playerLayer = (AVPlayerLayer *)layer;
+        CGRect rectInWindow = [playerLayer convertRect:playerLayer.bounds toLayer:window.layer];
+        CGRect rectInScreen = [window convertRect:rectInWindow toWindow:nil];
+        rectInScreen.origin.x -= screenBounds.origin.x;
+        rectInScreen.origin.y -= screenBounds.origin.y;
+        CGRect clippedRect = CGRectIntersection(CGRectMake(0, 0, screenBounds.size.width, screenBounds.size.height), rectInScreen);
+        if (!CGRectIsNull(clippedRect) && !CGRectIsEmpty(clippedRect)) {
+            UIImage *frameImage = [self imageForAVPlayerLayer:playerLayer targetSize:clippedRect.size];
+            if (frameImage) {
+                [self drawAVPlayerFrameImage:frameImage inRect:rectInScreen videoGravity:playerLayer.videoGravity];
+            }
+        }
+    }
+
+    NSArray<CALayer *> *sublayers = [layer.sublayers copy];
+    for (CALayer *sublayer in sublayers) {
+        [self drawVisibleAVPlayerLayersInLayer:sublayer window:window screenBounds:screenBounds];
+    }
+}
+
++ (UIImage *)imageForAVPlayerLayer:(AVPlayerLayer *)playerLayer targetSize:(CGSize)targetSize {
+    AVPlayerItem *item = playerLayer.player.currentItem;
+    if (!item || item.status == AVPlayerItemStatusFailed) {
+        return nil;
+    }
+
+    UIImage *outputImage = [self currentVideoOutputImageForPlayerItem:item];
+    if (outputImage && ![self imageLooksMostlyBlack:outputImage]) {
+        return outputImage;
+    }
+
+    CMTime currentTime = [item currentTime];
+    UIImage *currentImage = [self generatedImageForPlayerItem:item time:currentTime targetSize:targetSize];
+    if (currentImage && ![self imageLooksMostlyBlack:currentImage]) {
+        return currentImage;
+    }
+
+    NSArray<NSValue *> *fallbackTimes = [self fallbackTimesForPlayerItem:item currentTime:currentTime];
+    for (NSValue *timeValue in fallbackTimes) {
+        CMTime time = timeValue.CMTimeValue;
+        UIImage *image = [self generatedImageForPlayerItem:item time:time targetSize:targetSize];
+        if (image && ![self imageLooksMostlyBlack:image]) {
+            return image;
+        }
+    }
+
+    return outputImage ?: currentImage;
+}
+
++ (UIImage *)currentVideoOutputImageForPlayerItem:(AVPlayerItem *)item {
+    AVPlayerItemVideoOutput *videoOutput = nil;
+    for (AVPlayerItemOutput *output in item.outputs) {
+        if ([output isKindOfClass:AVPlayerItemVideoOutput.class]) {
+            videoOutput = (AVPlayerItemVideoOutput *)output;
+            break;
+        }
+    }
+
+    BOOL temporaryOutput = NO;
+    if (!videoOutput) {
+        NSDictionary *attributes = @{
+            (id)kCVPixelBufferPixelFormatTypeKey: @(kCVPixelFormatType_32BGRA)
+        };
+        videoOutput = [[AVPlayerItemVideoOutput alloc] initWithPixelBufferAttributes:attributes];
+        [item addOutput:videoOutput];
+        temporaryOutput = YES;
+    }
+
+    CVPixelBufferRef pixelBuffer = NULL;
+    CMTime currentTime = item.currentTime;
+    if (CMTIME_IS_VALID(currentTime)) {
+        pixelBuffer = [videoOutput copyPixelBufferForItemTime:currentTime itemTimeForDisplay:NULL];
+    }
+    if (!pixelBuffer) {
+        CMTime hostTime = [videoOutput itemTimeForHostTime:CACurrentMediaTime()];
+        if (CMTIME_IS_VALID(hostTime)) {
+            pixelBuffer = [videoOutput copyPixelBufferForItemTime:hostTime itemTimeForDisplay:NULL];
+        }
+    }
+
+    UIImage *image = nil;
+    if (pixelBuffer) {
+        image = [self imageFromPixelBuffer:pixelBuffer];
+        CVPixelBufferRelease(pixelBuffer);
+    }
+
+    if (temporaryOutput) {
+        [item removeOutput:videoOutput];
+    }
+    return image;
+}
+
++ (UIImage *)generatedImageForPlayerItem:(AVPlayerItem *)item time:(CMTime)time targetSize:(CGSize)targetSize {
+    if (!item.asset || !CMTIME_IS_VALID(time)) {
+        return nil;
+    }
+    AVAssetImageGenerator *generator = [[AVAssetImageGenerator alloc] initWithAsset:item.asset];
+    generator.appliesPreferredTrackTransform = YES;
+    generator.requestedTimeToleranceBefore = CMTimeMakeWithSeconds(0.5, 600);
+    generator.requestedTimeToleranceAfter = CMTimeMakeWithSeconds(0.5, 600);
+    CGFloat scale = [LKS_MultiplatformAdapter mainScreenScale];
+    if (targetSize.width > 0 && targetSize.height > 0 && scale > 0) {
+        generator.maximumSize = CGSizeMake(targetSize.width * scale, targetSize.height * scale);
+    }
+
+    NSError *error = nil;
+    CGImageRef cgImage = [generator copyCGImageAtTime:time actualTime:NULL error:&error];
+    if (!cgImage) {
+        return nil;
+    }
+    UIImage *image = [UIImage imageWithCGImage:cgImage scale:[LKS_MultiplatformAdapter mainScreenScale] orientation:UIImageOrientationUp];
+    CGImageRelease(cgImage);
+    return image;
+}
+
++ (NSArray<NSValue *> *)fallbackTimesForPlayerItem:(AVPlayerItem *)item currentTime:(CMTime)currentTime {
+    NSMutableArray<NSValue *> *times = [NSMutableArray array];
+    int32_t timescale = currentTime.timescale > 0 ? currentTime.timescale : 600;
+
+    if (CMTIME_IS_VALID(currentTime)) {
+        [times addObject:[NSValue valueWithCMTime:CMTimeAdd(currentTime, CMTimeMakeWithSeconds(1, timescale))]];
+        [times addObject:[NSValue valueWithCMTime:CMTimeAdd(currentTime, CMTimeMakeWithSeconds(2, timescale))]];
+    }
+
+    [times addObject:[NSValue valueWithCMTime:CMTimeMakeWithSeconds(1, 600)]];
+
+    CMTime duration = item.asset.duration;
+    if (CMTIME_IS_NUMERIC(duration) && duration.value > 0) {
+        Float64 seconds = CMTimeGetSeconds(duration);
+        if (isfinite(seconds) && seconds > 2) {
+            [times addObject:[NSValue valueWithCMTime:CMTimeMakeWithSeconds(seconds * 0.25, 600)]];
+            [times addObject:[NSValue valueWithCMTime:CMTimeMakeWithSeconds(seconds * 0.5, 600)]];
+        }
+    }
+    return times.copy;
+}
+
++ (UIImage *)imageFromPixelBuffer:(CVPixelBufferRef)pixelBuffer {
+    if (!pixelBuffer) {
+        return nil;
+    }
+
+    CIImage *ciImage = [CIImage imageWithCVPixelBuffer:pixelBuffer];
+    if (!ciImage) {
+        return nil;
+    }
+
+    static CIContext *ciContext;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        ciContext = [CIContext contextWithOptions:nil];
+    });
+
+    CGRect rect = CGRectMake(0, 0, CVPixelBufferGetWidth(pixelBuffer), CVPixelBufferGetHeight(pixelBuffer));
+    CGImageRef cgImage = [ciContext createCGImage:ciImage fromRect:rect];
+    if (!cgImage) {
+        return nil;
+    }
+
+    UIImage *image = [UIImage imageWithCGImage:cgImage scale:[LKS_MultiplatformAdapter mainScreenScale] orientation:UIImageOrientationUp];
+    CGImageRelease(cgImage);
+    return image;
+}
+
++ (void)drawAVPlayerFrameImage:(UIImage *)image inRect:(CGRect)rect videoGravity:(AVLayerVideoGravity)videoGravity {
+    if (!image || CGRectIsEmpty(rect)) {
+        return;
+    }
+
+    CGRect drawRect = rect;
+    CGSize imageSize = image.size;
+    if (imageSize.width > 0 && imageSize.height > 0 && rect.size.width > 0 && rect.size.height > 0) {
+        CGFloat imageAspect = imageSize.width / imageSize.height;
+        CGFloat rectAspect = rect.size.width / rect.size.height;
+        if ([videoGravity isEqualToString:AVLayerVideoGravityResizeAspect]) {
+            if (imageAspect > rectAspect) {
+                drawRect.size.height = rect.size.width / imageAspect;
+                drawRect.origin.y += (rect.size.height - drawRect.size.height) / 2.0;
+            } else {
+                drawRect.size.width = rect.size.height * imageAspect;
+                drawRect.origin.x += (rect.size.width - drawRect.size.width) / 2.0;
+            }
+        } else if ([videoGravity isEqualToString:AVLayerVideoGravityResizeAspectFill]) {
+            if (imageAspect > rectAspect) {
+                drawRect.size.width = rect.size.height * imageAspect;
+                drawRect.origin.x += (rect.size.width - drawRect.size.width) / 2.0;
+            } else {
+                drawRect.size.height = rect.size.width / imageAspect;
+                drawRect.origin.y += (rect.size.height - drawRect.size.height) / 2.0;
+            }
+        }
+    }
+
+    CGContextRef context = UIGraphicsGetCurrentContext();
+    if (!context) {
+        return;
+    }
+    CGContextSaveGState(context);
+    UIRectClip(rect);
+    CGContextSetBlendMode(context, kCGBlendModeLighten);
+    [image drawInRect:drawRect];
+    CGContextRestoreGState(context);
+}
+
++ (BOOL)imageLooksMostlyBlack:(UIImage *)image {
+    CGImageRef cgImage = image.CGImage;
+    if (!cgImage) {
+        return NO;
+    }
+
+    const size_t width = 16;
+    const size_t height = 16;
+    unsigned char pixels[width * height * 4];
+    memset(pixels, 0, sizeof(pixels));
+
+    CGColorSpaceRef colorSpace = CGColorSpaceCreateDeviceRGB();
+    CGContextRef context = CGBitmapContextCreate(pixels, width, height, 8, width * 4, colorSpace, kCGImageAlphaPremultipliedLast | kCGBitmapByteOrder32Big);
+    CGColorSpaceRelease(colorSpace);
+    if (!context) {
+        return NO;
+    }
+    CGContextDrawImage(context, CGRectMake(0, 0, width, height), cgImage);
+    CGContextRelease(context);
+
+    NSUInteger blackPixels = 0;
+    NSUInteger visiblePixels = 0;
+    for (NSUInteger idx = 0; idx < width * height; idx++) {
+        unsigned char *pixel = &pixels[idx * 4];
+        CGFloat red = pixel[0] / 255.0;
+        CGFloat green = pixel[1] / 255.0;
+        CGFloat blue = pixel[2] / 255.0;
+        CGFloat alpha = pixel[3] / 255.0;
+        if (alpha <= 0.05) {
+            continue;
+        }
+        visiblePixels += 1;
+        CGFloat maxChannel = MAX(red, MAX(green, blue));
+        CGFloat sum = red + green + blue;
+        if (maxChannel < 0.08 && sum < 0.18) {
+            blackPixels += 1;
+        }
+    }
+    if (visiblePixels == 0) {
+        return NO;
+    }
+    return ((CGFloat)blackPixels / (CGFloat)visiblePixels) > 0.9;
 }
 
 + (NSArray<UIWindow *> *)visibleWindowsForScreenScreenshot {

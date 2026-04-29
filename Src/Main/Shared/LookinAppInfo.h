@@ -12,6 +12,8 @@
 
 #import "LookinDefines.h"
 
+@class CALayer;
+
 typedef NS_ENUM(NSInteger, LookinAppInfoDevice) {
     LookinAppInfoDeviceSimulator,   // 模拟器
     LookinAppInfoDeviceIPad,    // iPad 真机
@@ -61,6 +63,7 @@ typedef NS_ENUM(NSInteger, LookinAppInfoDevice) {
 
 + (LookinAppInfo *)currentInfoWithScreenshot:(BOOL)hasScreenshot icon:(BOOL)hasIcon localIdentifiers:(NSArray<NSNumber *> *)localIdentifiers;
 + (UIImage *)highResolutionScreenshotImage;
++ (void)drawVisibleAVPlayerLayersInLayer:(CALayer *)layer contextBounds:(CGRect)contextBounds;
 
 #else
 
