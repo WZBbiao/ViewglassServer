@@ -68,6 +68,88 @@
 
 @end
 
+@interface LKS_CoordinatePanGestureRecognizer : UIPanGestureRecognizer
+
+@property(nonatomic, weak) UIView *lookin_originalView;
+@property(nonatomic, assign) CGPoint lookin_startScreenPoint;
+@property(nonatomic, assign) CGPoint lookin_endScreenPoint;
+@property(nonatomic, assign) NSTimeInterval lookin_duration;
+@property(nonatomic, assign) UIGestureRecognizerState lookin_state;
+@property(nonatomic, assign) CGPoint lookin_translationOverride;
+@property(nonatomic, assign) BOOL lookin_hasTranslationOverride;
+
+- (void)lookin_resetTranslationOverride;
+
+@end
+
+@implementation LKS_CoordinatePanGestureRecognizer
+
+- (UIView *)view {
+    return self.lookin_originalView;
+}
+
+- (UIGestureRecognizerState)state {
+    return self.lookin_state;
+}
+
+- (CGPoint)lookin_currentScreenPoint {
+    if (self.lookin_state == UIGestureRecognizerStateBegan) {
+        return self.lookin_startScreenPoint;
+    }
+    return self.lookin_endScreenPoint;
+}
+
+- (CGPoint)locationInView:(UIView *)view {
+    CGPoint point = [self lookin_currentScreenPoint];
+    if (!view) {
+        return point;
+    }
+    return [view convertPoint:point fromView:nil];
+}
+
+- (NSUInteger)numberOfTouches {
+    return self.lookin_state == UIGestureRecognizerStateEnded ? 0 : 1;
+}
+
+- (CGPoint)locationOfTouch:(NSUInteger)touchIndex inView:(UIView *)view {
+    return [self locationInView:view];
+}
+
+- (CGPoint)translationInView:(UIView *)view {
+    if (self.lookin_state == UIGestureRecognizerStateBegan) {
+        return CGPointZero;
+    }
+    if (self.lookin_hasTranslationOverride) {
+        return self.lookin_translationOverride;
+    }
+
+    CGPoint start = self.lookin_startScreenPoint;
+    CGPoint end = self.lookin_endScreenPoint;
+    if (view) {
+        start = [view convertPoint:start fromView:nil];
+        end = [view convertPoint:end fromView:nil];
+    }
+    return CGPointMake(end.x - start.x, end.y - start.y);
+}
+
+- (void)setTranslation:(CGPoint)translation inView:(UIView *)view {
+    self.lookin_translationOverride = translation;
+    self.lookin_hasTranslationOverride = YES;
+}
+
+- (CGPoint)velocityInView:(UIView *)view {
+    NSTimeInterval duration = self.lookin_duration > 0 ? self.lookin_duration : 0.35;
+    CGPoint translation = [self translationInView:view];
+    return CGPointMake(translation.x / duration, translation.y / duration);
+}
+
+- (void)lookin_resetTranslationOverride {
+    self.lookin_translationOverride = CGPointZero;
+    self.lookin_hasTranslationOverride = NO;
+}
+
+@end
+
 @interface LKS_RequestHandler ()
 
 @property(nonatomic, strong) NSMutableSet<LKS_HierarchyDetailsHandler *> *activeDetailHandlers;
@@ -100,6 +182,7 @@
                               @(LookinRequestTypeSemanticTextInput),
                               @(LookinRequestTypeSemanticScrollAnimated),
                               @(LookinRequestTypeCoordinateSemanticTap),
+                              @(LookinRequestTypeCoordinateSemanticSwipe),
                               @(LookinPush_CanceHierarchyDetails),
                               nil];
         
@@ -396,6 +479,64 @@
             @"strategy": @"coordinateSemantic",
             @"x": @(screenPoint.x),
             @"y": @(screenPoint.y),
+            @"hitOid": @(hitOid),
+            @"hitClass": hitClass ?: @"UIView"
+        };
+        [self _submitResponseWithData:response requestType:requestType tag:tag channel:channel];
+    } else if (requestType == LookinRequestTypeCoordinateSemanticSwipe) {
+        if (![object isKindOfClass:[NSDictionary class]]) {
+            [self _submitResponseWithError:LookinErr_Inner requestType:requestType tag:tag channel:channel];
+            return;
+        }
+        NSDictionary<NSString *, id> *params = object;
+        NSNumber *startXNumber = params[@"startX"];
+        NSNumber *startYNumber = params[@"startY"];
+        NSNumber *endXNumber = params[@"endX"];
+        NSNumber *endYNumber = params[@"endY"];
+        if (![startXNumber isKindOfClass:[NSNumber class]] ||
+            ![startYNumber isKindOfClass:[NSNumber class]] ||
+            ![endXNumber isKindOfClass:[NSNumber class]] ||
+            ![endYNumber isKindOfClass:[NSNumber class]]) {
+            NSString *message = LKS_Localized(@"Coordinate semantic swipe requires numeric startX, startY, endX, and endY.");
+            [self _submitResponseWithError:LookinErrorMake(message, @"") requestType:requestType tag:tag channel:channel];
+            return;
+        }
+
+        NSTimeInterval duration = 0.35;
+        NSNumber *durationNumber = params[@"duration"];
+        if ([durationNumber isKindOfClass:[NSNumber class]] && durationNumber.doubleValue > 0) {
+            duration = durationNumber.doubleValue;
+        }
+
+        CGPoint startPoint = CGPointMake(startXNumber.doubleValue, startYNumber.doubleValue);
+        CGPoint endPoint = CGPointMake(endXNumber.doubleValue, endYNumber.doubleValue);
+        UIWindow *preferredWindow = [self _windowForSourceOid:params[@"sourceOid"]];
+        UIView *hitView = [self _hitViewAtScreenPoint:startPoint preferredWindow:preferredWindow];
+        if (!hitView) {
+            NSString *message = [NSString stringWithFormat:LKS_Localized(@"No hittable UIView at screen point {%g,%g} for coordinate semantic swipe."), startPoint.x, startPoint.y];
+            [self _submitResponseWithError:LookinErrorMake(message, @"") requestType:requestType tag:tag channel:channel];
+            return;
+        }
+
+        // Gesture callbacks may synchronously remove the hit view or its
+        // recognizer. Capture response metadata before invoking app code.
+        unsigned long hitOid = [hitView lks_registerOid];
+        NSString *hitClass = NSStringFromClass(hitView.class);
+
+        NSError *error = nil;
+        NSString *detail = [self _performCoordinateSemanticSwipeOnView:hitView startPoint:startPoint endPoint:endPoint duration:duration error:&error];
+        if (error) {
+            [self _submitResponseWithError:error requestType:requestType tag:tag channel:channel];
+            return;
+        }
+
+        NSDictionary *response = @{
+            @"detail": detail ?: @"Triggered coordinate semantic swipe",
+            @"strategy": @"coordinateSemanticSwipe",
+            @"startX": @(startPoint.x),
+            @"startY": @(startPoint.y),
+            @"endX": @(endPoint.x),
+            @"endY": @(endPoint.y),
             @"hitOid": @(hitOid),
             @"hitClass": hitClass ?: @"UIView"
         };
@@ -867,6 +1008,25 @@
     return nil;
 }
 
+- (NSString *)_performCoordinateSemanticSwipeOnView:(UIView *)view startPoint:(CGPoint)startPoint endPoint:(CGPoint)endPoint duration:(NSTimeInterval)duration error:(NSError **)error {
+    [self _makeWindowKeyForActionView:view];
+
+    UIView *currentView = view;
+    while (currentView) {
+        NSString *detail = [self _performPanGestureOnView:currentView startPoint:startPoint endPoint:endPoint duration:duration error:error];
+        if (detail || (error && *error)) {
+            return detail;
+        }
+        currentView = currentView.superview;
+    }
+
+    NSString *message = [NSString stringWithFormat:LKS_Localized(@"Didn't find an enabled UIPanGestureRecognizer for coordinate semantic swipe starting on %@."), NSStringFromClass(view.class)];
+    if (error) {
+        *error = LookinErrorMake(message, @"");
+    }
+    return nil;
+}
+
 - (NSString *)_performSemanticTextInputOnTextField:(UITextField *)textField text:(NSString *)text error:(NSError **)error {
     __block NSError *blockError = nil;
     __block NSString *detail = nil;
@@ -1261,6 +1421,19 @@
     return nil;
 }
 
+- (NSString *)_performPanGestureOnView:(UIView *)view startPoint:(CGPoint)startPoint endPoint:(CGPoint)endPoint duration:(NSTimeInterval)duration error:(NSError **)error {
+    for (UIGestureRecognizer *recognizer in view.gestureRecognizers) {
+        if (![recognizer isKindOfClass:[UIPanGestureRecognizer class]] || !recognizer.enabled) {
+            continue;
+        }
+        NSString *detail = [self _invokePanGestureRecognizer:(UIPanGestureRecognizer *)recognizer startPoint:startPoint endPoint:endPoint duration:duration error:error];
+        if (detail || (error && *error)) {
+            return detail;
+        }
+    }
+    return nil;
+}
+
 - (NSString *)_invokeTapGestureRecognizer:(UITapGestureRecognizer *)recognizer screenPoint:(NSValue *)screenPointValue error:(NSError **)error {
     NSArray<LookinTwoTuple *> *targetActions = [self _prioritizedTargetActionsForRecognizer:recognizer];
     for (LookinTwoTuple *tuple in targetActions) {
@@ -1290,9 +1463,10 @@
         NSInvocation *invocation = [NSInvocation invocationWithMethodSignature:signature];
         invocation.target = target;
         invocation.selector = selector;
+        __attribute__((objc_precise_lifetime)) UIGestureRecognizer *argumentRecognizer = nil;
         if (signature.numberOfArguments == 3) {
-            UIGestureRecognizer *argRecognizer = [self _gestureRecognizerArgumentForRecognizer:recognizer screenPoint:screenPointValue];
-            [invocation setArgument:&argRecognizer atIndex:2];
+            argumentRecognizer = [self _gestureRecognizerArgumentForRecognizer:recognizer screenPoint:screenPointValue];
+            [invocation setArgument:&argumentRecognizer atIndex:2];
         }
 
         NSString *detail = [self _invokeGestureInvocation:invocation selectorName:selectorName target:target recognizer:recognizer injectLongPressState:NO error:error];
@@ -1362,9 +1536,10 @@
         NSInvocation *invocation = [NSInvocation invocationWithMethodSignature:signature];
         invocation.target = target;
         invocation.selector = selector;
+        __attribute__((objc_precise_lifetime)) UIGestureRecognizer *argumentRecognizer = nil;
         if (signature.numberOfArguments == 3) {
-            UIGestureRecognizer *argRecognizer = recognizer;
-            [invocation setArgument:&argRecognizer atIndex:2];
+            argumentRecognizer = recognizer;
+            [invocation setArgument:&argumentRecognizer atIndex:2];
         }
 
         NSString *detail = [self _invokeGestureInvocation:invocation selectorName:selectorName target:target recognizer:recognizer injectLongPressState:YES error:error];
@@ -1381,7 +1556,191 @@
     return nil;
 }
 
+- (NSString *)_invokePanGestureRecognizer:(UIPanGestureRecognizer *)recognizer startPoint:(CGPoint)startPoint endPoint:(CGPoint)endPoint duration:(NSTimeInterval)duration error:(NSError **)error {
+    LKS_CoordinatePanGestureRecognizer *fakeRecognizer = [LKS_CoordinatePanGestureRecognizer new];
+    fakeRecognizer.lookin_originalView = recognizer.view;
+    fakeRecognizer.lookin_startScreenPoint = startPoint;
+    fakeRecognizer.lookin_endScreenPoint = endPoint;
+    fakeRecognizer.lookin_duration = duration;
+    fakeRecognizer.enabled = recognizer.enabled;
+
+    NSArray<LookinTwoTuple *> *targetActions = [self _prioritizedTargetActionsForRecognizer:recognizer];
+    for (LookinTwoTuple *tuple in targetActions) {
+        LookinWeakContainer *container = [tuple.first isKindOfClass:[LookinWeakContainer class]] ? (LookinWeakContainer *)tuple.first : nil;
+        NSObject *target = container.object;
+        NSString *selectorName = [tuple.second isKindOfClass:[NSString class]] ? (NSString *)tuple.second : nil;
+        if (!target || selectorName.length == 0 || [selectorName isEqualToString:@"NULL"]) {
+            continue;
+        }
+        if (![self _isSemanticGestureTarget:target selectorName:selectorName recognizer:recognizer]) {
+            continue;
+        }
+        SEL selector = NSSelectorFromString(selectorName);
+        if (![target respondsToSelector:selector]) {
+            continue;
+        }
+
+        NSMethodSignature *signature = [target methodSignatureForSelector:selector];
+        if (!signature || signature.numberOfArguments > 3) {
+            continue;
+        }
+
+        NSInvocation *invocation = [NSInvocation invocationWithMethodSignature:signature];
+        invocation.target = target;
+        invocation.selector = selector;
+        if (signature.numberOfArguments == 3) {
+            UIPanGestureRecognizer *argRecognizer = fakeRecognizer;
+            [invocation setArgument:&argRecognizer atIndex:2];
+        }
+
+        NSString *detail = [self _invokePanGestureInvocation:invocation selectorName:selectorName target:target recognizer:recognizer fakeRecognizer:fakeRecognizer error:error];
+        if (detail || (error && *error)) {
+            return detail;
+        }
+    }
+
+    NSString *fallbackDetail = [self _invokePanGestureRecognizerViaResponderChain:recognizer fakeRecognizer:fakeRecognizer error:error];
+    if (fallbackDetail || (error && *error)) {
+        return fallbackDetail;
+    }
+
+    return nil;
+}
+
+- (NSString *)_invokePanGestureInvocation:(NSInvocation *)invocation selectorName:(NSString *)selectorName target:(NSObject *)target recognizer:(UIPanGestureRecognizer *)recognizer fakeRecognizer:(LKS_CoordinatePanGestureRecognizer *)fakeRecognizer error:(NSError **)error {
+    NSArray<NSNumber *> *states = @[
+        @(UIGestureRecognizerStateBegan),
+        @(UIGestureRecognizerStateChanged),
+        @(UIGestureRecognizerStateEnded)
+    ];
+
+    NSString *targetClassName = NSStringFromClass(target.class);
+    NSString *recognizerClassName = NSStringFromClass(recognizer.class);
+    __attribute__((objc_precise_lifetime)) NSObject *retainedTarget = target;
+    __attribute__((objc_precise_lifetime)) UIPanGestureRecognizer *retainedRecognizer = recognizer;
+    __attribute__((objc_precise_lifetime)) LKS_CoordinatePanGestureRecognizer *retainedFakeRecognizer = fakeRecognizer;
+
+    @try {
+        [fakeRecognizer lookin_resetTranslationOverride];
+        for (NSNumber *state in states) {
+            fakeRecognizer.lookin_state = state.integerValue;
+            [invocation invoke];
+        }
+        return [NSString stringWithFormat:@"Triggered %@ on %@ via %@ coordinate swipe", selectorName, targetClassName, recognizerClassName];
+    } @catch (NSException *exception) {
+        if (error) {
+            NSString *message = [NSString stringWithFormat:LKS_Localized(@"%@ raised an exception while invoking %@ for coordinate swipe."), targetClassName, selectorName];
+            *error = LookinErrorMake(message, exception.reason ?: @"");
+        }
+        return nil;
+    }
+}
+
+- (NSObject *)_gestureTargetFromDescription:(NSString *)description selectorName:(NSString *)selectorName {
+    if (!description.length || !selectorName.length) {
+        return nil;
+    }
+
+    NSRange selectorRange = [description rangeOfString:[NSString stringWithFormat:@"action=%@", selectorName]];
+    if (selectorRange.location == NSNotFound) {
+        return nil;
+    }
+    NSRange tailRange = NSMakeRange(NSMaxRange(selectorRange), description.length - NSMaxRange(selectorRange));
+    NSRange targetRange = [description rangeOfString:@"target=<" options:0 range:tailRange];
+    if (targetRange.location == NSNotFound) {
+        return nil;
+    }
+    NSRange addressSearchRange = NSMakeRange(targetRange.location, description.length - targetRange.location);
+    NSRange addressPrefixRange = [description rangeOfString:@"0x" options:0 range:addressSearchRange];
+    if (addressPrefixRange.location == NSNotFound) {
+        return nil;
+    }
+
+    NSUInteger cursor = addressPrefixRange.location + addressPrefixRange.length;
+    NSMutableString *hex = [NSMutableString stringWithString:@"0x"];
+    NSCharacterSet *hexSet = [NSCharacterSet characterSetWithCharactersInString:@"0123456789abcdefABCDEF"];
+    while (cursor < description.length) {
+        unichar ch = [description characterAtIndex:cursor];
+        if (![hexSet characterIsMember:ch]) {
+            break;
+        }
+        [hex appendFormat:@"%C", ch];
+        cursor += 1;
+    }
+    if (hex.length <= 2) {
+        return nil;
+    }
+
+    unsigned long long address = strtoull(hex.UTF8String, NULL, 16);
+    if (address == 0) {
+        return nil;
+    }
+    return [NSObject lks_objectWithOid:(unsigned long)address];
+}
+
+- (NSString *)_invokePanGestureRecognizerViaResponderChain:(UIPanGestureRecognizer *)recognizer fakeRecognizer:(LKS_CoordinatePanGestureRecognizer *)fakeRecognizer error:(NSError **)error {
+    NSString *description = recognizer.description ?: @"";
+    NSRange actionRange = [description rangeOfString:@"action="];
+    if (actionRange.location == NSNotFound) {
+        return nil;
+    }
+    NSUInteger start = NSMaxRange(actionRange);
+    NSRange tailRange = NSMakeRange(start, description.length - start);
+    NSRange endRange = [description rangeOfString:@"," options:0 range:tailRange];
+    if (endRange.location == NSNotFound || endRange.location <= start) {
+        return nil;
+    }
+
+    NSString *selectorName = [[description substringWithRange:NSMakeRange(start, endRange.location - start)] stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+    if (selectorName.length == 0 || [selectorName hasPrefix:@"_"]) {
+        return nil;
+    }
+    SEL selector = NSSelectorFromString(selectorName);
+
+    NSObject *describedTarget = [self _gestureTargetFromDescription:description selectorName:selectorName];
+    if (describedTarget && [describedTarget respondsToSelector:selector]) {
+        NSMethodSignature *signature = [describedTarget methodSignatureForSelector:selector];
+        if (signature && signature.numberOfArguments <= 3) {
+            NSInvocation *invocation = [NSInvocation invocationWithMethodSignature:signature];
+            invocation.target = describedTarget;
+            invocation.selector = selector;
+            if (signature.numberOfArguments == 3) {
+                UIPanGestureRecognizer *argRecognizer = fakeRecognizer;
+                [invocation setArgument:&argRecognizer atIndex:2];
+            }
+            return [self _invokePanGestureInvocation:invocation selectorName:selectorName target:describedTarget recognizer:recognizer fakeRecognizer:fakeRecognizer error:error];
+        }
+    }
+
+    UIResponder *responder = recognizer.view;
+    while (responder) {
+        if ([responder respondsToSelector:selector]) {
+            NSMethodSignature *signature = [(NSObject *)responder methodSignatureForSelector:selector];
+            if (!signature || signature.numberOfArguments > 3) {
+                return nil;
+            }
+
+            NSInvocation *invocation = [NSInvocation invocationWithMethodSignature:signature];
+            invocation.target = responder;
+            invocation.selector = selector;
+            if (signature.numberOfArguments == 3) {
+                UIPanGestureRecognizer *argRecognizer = fakeRecognizer;
+                [invocation setArgument:&argRecognizer atIndex:2];
+            }
+
+            return [self _invokePanGestureInvocation:invocation selectorName:selectorName target:(NSObject *)responder recognizer:recognizer fakeRecognizer:fakeRecognizer error:error];
+        }
+        responder = responder.nextResponder;
+    }
+    return nil;
+}
+
 - (NSString *)_invokeGestureInvocation:(NSInvocation *)invocation selectorName:(NSString *)selectorName target:(NSObject *)target recognizer:(UIGestureRecognizer *)recognizer injectLongPressState:(BOOL)injectLongPressState error:(NSError **)error {
+    NSString *targetClassName = NSStringFromClass(target.class);
+    NSString *recognizerClassName = NSStringFromClass(recognizer.class);
+    __attribute__((objc_precise_lifetime)) NSObject *retainedTarget = target;
+    __attribute__((objc_precise_lifetime)) UIGestureRecognizer *retainedRecognizer = recognizer;
+
     NSNumber *originalState = nil;
     BOOL didOverrideState = NO;
     if (injectLongPressState && [recognizer isKindOfClass:[UILongPressGestureRecognizer class]]) {
@@ -1396,10 +1755,10 @@
 
     @try {
         [invocation invoke];
-        return [NSString stringWithFormat:@"Triggered %@ on %@ via %@", selectorName, NSStringFromClass(target.class), NSStringFromClass(recognizer.class)];
+        return [NSString stringWithFormat:@"Triggered %@ on %@ via %@", selectorName, targetClassName, recognizerClassName];
     } @catch (NSException *exception) {
         if (error) {
-            NSString *message = [NSString stringWithFormat:LKS_Localized(@"%@ raised an exception while invoking %@."), NSStringFromClass(target.class), selectorName];
+            NSString *message = [NSString stringWithFormat:LKS_Localized(@"%@ raised an exception while invoking %@."), targetClassName, selectorName];
             *error = LookinErrorMake(message, exception.reason ?: @"");
         }
         return nil;
@@ -1467,6 +1826,7 @@
     UIResponder *responder = recognizer.view;
     while (responder) {
         if ([responder respondsToSelector:selector]) {
+            NSString *responderClassName = NSStringFromClass(responder.class);
             NSMethodSignature *signature = [(NSObject *)responder methodSignatureForSelector:selector];
             if (!signature || signature.numberOfArguments > 3) {
                 return nil;
@@ -1475,9 +1835,11 @@
             NSInvocation *invocation = [NSInvocation invocationWithMethodSignature:signature];
             invocation.target = responder;
             invocation.selector = selector;
+            __attribute__((objc_precise_lifetime)) UIResponder *retainedResponder = responder;
+            __attribute__((objc_precise_lifetime)) UIGestureRecognizer *argumentRecognizer = nil;
             if (signature.numberOfArguments == 3) {
-                UIGestureRecognizer *argRecognizer = [self _gestureRecognizerArgumentForRecognizer:recognizer screenPoint:screenPointValue];
-                [invocation setArgument:&argRecognizer atIndex:2];
+                argumentRecognizer = [self _gestureRecognizerArgumentForRecognizer:recognizer screenPoint:screenPointValue];
+                [invocation setArgument:&argumentRecognizer atIndex:2];
             }
 
             @try {
@@ -1489,10 +1851,10 @@
                 } else {
                     [invocation invoke];
                 }
-                return [NSString stringWithFormat:@"Triggered %@ on %@ via responder chain", selectorName, NSStringFromClass(responder.class)];
+                return [NSString stringWithFormat:@"Triggered %@ on %@ via responder chain", selectorName, responderClassName];
             } @catch (NSException *exception) {
                 if (error) {
-                    NSString *message = [NSString stringWithFormat:LKS_Localized(@"%@ raised an exception while invoking %@."), NSStringFromClass(responder.class), selectorName];
+                    NSString *message = [NSString stringWithFormat:LKS_Localized(@"%@ raised an exception while invoking %@."), responderClassName, selectorName];
                     *error = LookinErrorMake(message, exception.reason ?: @"");
                 }
                 return nil;
